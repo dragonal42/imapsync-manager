@@ -16,3 +16,6 @@ services:
     volumes:
       - /opt/imapsyncmanager:/app/data
     restart: unless-stopped
+
+#Note sur le serveur : Assure-toi de donner les bons droits au dossier sur l'hôte avant de lancer la stack 
+#(sudo mkdir -p /opt/imapsyncmanager && sudo chmod -R 777 /opt/imapsyncmanager).
