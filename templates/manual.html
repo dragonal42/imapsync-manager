@@ -9,6 +9,7 @@
         <link rel="stylesheet" href="/static/imapsync_form.css">
         <style>
           .back-btn-container { margin: 20px 0; }
+          .oauth-buttons { margin-bottom: 10px; }
         </style>
         <script>
             function toggleAuthManual(selectElem, passGrpId, tokenGrpId) {
@@ -19,6 +20,12 @@
                     document.getElementById(passGrpId).style.display = 'block';
                     document.getElementById(tokenGrpId).style.display = 'none';
                 }
+            }
+
+            function openOAuth(provider, targetField) {
+                let width = 500; let height = 600;
+                let left = (screen.width - width) / 2; let top = (screen.height - height) / 2;
+                window.open(`/oauth/login/${provider}?target_field=${targetField}`, 'OAuth', `width=${width},height=${height},top=${top},left=${left}`);
             }
         </script>
 </head>
@@ -65,9 +72,13 @@
 
                 <div id="grp_token1" style="display: none;">
                     <label for="oauth2_token1">Access Token OAuth2</label>
+                    <div class="oauth-buttons">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="openOAuth('google', 'oauth2_token1')">Login Google</button>
+                        <button type="button" class="btn btn-primary btn-sm" onclick="openOAuth('microsoft', 'oauth2_token1')">Login Microsoft</button>
+                    </div>
                     <div class="input-group form-group">
                         <span class="input-group-addon"><i class="glyphicon glyphicon-qrcode"></i></span>
-                        <input type="password" class="form-control input-lg" id="oauth2_token1" name="oauth2_token1" placeholder="Enter Access Token">
+                        <input type="text" class="form-control input-lg" id="oauth2_token1" name="oauth2_token1" placeholder="Jeton auto-injecté ou manuel">
                     </div>
                 </div>
 
@@ -137,9 +148,13 @@
 
                 <div id="grp_token2" style="display: none;">
                     <label for="oauth2_token2">Access Token OAuth2</label>
+                    <div class="oauth-buttons">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="openOAuth('google', 'oauth2_token2')">Login Google</button>
+                        <button type="button" class="btn btn-primary btn-sm" onclick="openOAuth('microsoft', 'oauth2_token2')">Login Microsoft</button>
+                    </div>
                     <div class="input-group form-group">
                         <span class="input-group-addon"><i class="glyphicon glyphicon-qrcode"></i></span>
-                        <input type="password" class="form-control input-lg" id="oauth2_token2" name="oauth2_token2" placeholder="Enter Access Token">
+                        <input type="text" class="form-control input-lg" id="oauth2_token2" name="oauth2_token2" placeholder="Jeton auto-injecté ou manuel">
                     </div>
                 </div>
 
@@ -206,7 +221,7 @@
 <script src="/static/imapsync_form.js" type="text/javascript"></script>
 
 <script>
-    // Show/Hide paswword
+    // Show/Hide password
     document.getElementById('showpassword1').addEventListener('change', function() {
         document.getElementById('password1').type = this.checked ? 'text' : 'password';
     });
