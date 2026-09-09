@@ -82,10 +82,10 @@ services:
     # remplace "alain" par ton identifiant et colle le hash généré à
     # l'étape 5 ci-dessus (jamais le mot de passe en clair).
     labels:
-      caddy: imapsync.exemple.com
-      caddy.reverse_proxy: "{{upstreams 8080}}"
-      # caddy.basicauth: "/*"
-      # caddy.basicauth.alain: "$$2a$$14$$REMPLACE_PAR_TON_HASH_CADDY"
+      - "caddy=${CADDY_URL}"
+      - "caddy.reverse_proxy={{upstreams 8080}}"
+      - "caddy.basicauth=/*"
+      - "caddy.basicauth.${CADDY_USER}=${CADDY_AUTH_HASH}"
 
 # =============================================================================
 # Réseau externe : doit déjà exister (voir étape 1 plus haut).
