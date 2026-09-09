@@ -48,7 +48,8 @@ COPY templates /app/templates
 COPY static /app/static
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh /app/daily_mail.sh
+COPY imapsync /usr/bin/imapsync
+RUN chmod +x /usr/bin/imapsync
 
 EXPOSE 8080
 
