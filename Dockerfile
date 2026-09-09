@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y \
     libterm-readkey-perl \
     libunicode-string-perl \
     liburi-perl \
-    wget \
     ca-certificates \
     python3 \
     python3-pip \
@@ -34,22 +33,20 @@ RUN apt-get update && apt-get install -y \
     msmtp-mta \
     gettext-base \
     cron \
-    && wget https://raw.githubusercontent.com/imapsync/imapsync/master/imapsync -O /usr/bin/imapsync \
+    && rm -rf /var/lib/apt/lists/*
     && chmod +x /usr/bin/imapsync \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart requests --break-system-packages
 
+#&& wget https://raw.githubusercontent.com/imapsync/imapsync/master/imapsync -O /usr/bin/imapsync \
+    
 WORKDIR /app
-
 # Installation des modules Python requis
-RUN pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart --break-system-packages
+RUN pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart requests --break-system-packages
 
 COPY main.py /app/main.py
 COPY msmtp.conf.template /app/msmtp.conf.template
 COPY templates /app/templates
 COPY static /app/static
 COPY entrypoint.sh /app/entrypoint.sh
-
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8080
