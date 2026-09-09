@@ -52,11 +52,19 @@ async def index(request: Request):
     if os.path.exists(DAILY_REPORT):
         with open(DAILY_REPORT, "r") as f:
             logs = f.read()
-    return templates.TemplateResponse("index.html", {"request": request, "config": config, "logs": logs})
+    return templates.TemplateResponse(
+        request=request, 
+        name="index.html", 
+        context={"config": config, "logs": logs}
+    )
 
 @app.get("/manual", response_class=HTMLResponse)
 async def manual(request: Request):
-    return templates.TemplateResponse("manual.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request, 
+        name="manual.html", 
+        context={}
+    )
 
 @app.post("/settings")
 async def update_settings(poll_interval: int = Form(...), report_email: str = Form(...)):
