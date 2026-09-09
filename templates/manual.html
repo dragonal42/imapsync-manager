@@ -6,12 +6,21 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
         <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css">
-        
         <link rel="stylesheet" href="/static/imapsync_form.css">
-        
         <style>
           .back-btn-container { margin: 20px 0; }
         </style>
+        <script>
+            function toggleAuthManual(selectElem, passGrpId, tokenGrpId) {
+                if (selectElem.value === 'XOAUTH2') {
+                    document.getElementById(passGrpId).style.display = 'none';
+                    document.getElementById(tokenGrpId).style.display = 'block';
+                } else {
+                    document.getElementById(passGrpId).style.display = 'block';
+                    document.getElementById(tokenGrpId).style.display = 'none';
+                }
+            }
+        </script>
 </head>
 <body>
 
@@ -25,35 +34,52 @@
     
     <form id="form" action="/cgi-bin/imapsync" method="post" autocomplete="on">
         <div id="form_row" class="row">
+            
+            <!-- ACCOUNT 1 (SOURCE) -->
             <div id="account1" class="col-md-5" >
                 <fieldset>
                 <legend class="text-center h2">IMAP source Mailbox</legend>
 
-                <label for="user1">Login</label> (usually an email address)
+                <label for="user1">Login</label>
                 <div class="input-group form-group">
                     <span class="input-group-addon"><i class="glyphicon glyphicon-user"> </i></span>
-                    <input type="text" class="form-control input-lg" id="user1" name="user1" tabindex="1" placeholder="Enter login name">
+                    <input type="text" class="form-control input-lg" id="user1" name="user1" placeholder="Enter login name">
+                </div>
+                
+                <label for="authmech1">Méthode d'Authentification</label>
+                <div class="form-group">
+                    <select class="form-control input-lg" id="authmech1" name="authmech1" onchange="toggleAuthManual(this, 'grp_pass1', 'grp_token1')">
+                        <option value="PLAIN">Mot de passe classique</option>
+                        <option value="XOAUTH2">Jeton OAuth2 (XOAUTH2)</option>
+                    </select>
                 </div>
 
-                <label for="password1">Password</label>
-                <label class="checkbox-inline out">
-                    <input type="checkbox" id="showpassword1"> show password
-                </label>
-                <div class="input-group form-group">
-                    <span class="input-group-addon"><i class="glyphicon glyphicon-lock"></i></span>
-                    <input type="password" class="form-control input-lg" id="password1" name="password1" tabindex="2" placeholder="Enter password">
+                <div id="grp_pass1">
+                    <label for="password1">Password</label>
+                    <label class="checkbox-inline out"><input type="checkbox" id="showpassword1"> show</label>
+                    <div class="input-group form-group">
+                        <span class="input-group-addon"><i class="glyphicon glyphicon-lock"></i></span>
+                        <input type="password" class="form-control input-lg" id="password1" name="password1" placeholder="Enter password">
+                    </div>
                 </div>
 
-                <label for="host1">IMAP Server hostname</label> (or its IP address)
+                <div id="grp_token1" style="display: none;">
+                    <label for="oauth2_token1">Access Token OAuth2</label>
+                    <div class="input-group form-group">
+                        <span class="input-group-addon"><i class="glyphicon glyphicon-qrcode"></i></span>
+                        <input type="password" class="form-control input-lg" id="oauth2_token1" name="oauth2_token1" placeholder="Enter Access Token">
+                    </div>
+                </div>
+
+                <label for="host1">IMAP Server hostname</label>
                 <div class="input-group form-group">
                     <span class="input-group-addon"><i class="glyphicon glyphicon-cloud"></i></span>
-                    <input type="text" class="form-control input-lg" id="host1" name="host1" tabindex="3" placeholder="Enter IMAP source server name or IP address">
+                    <input type="text" class="form-control input-lg" id="host1" name="host1" placeholder="Enter IMAP source server">
                 </div>
                 
                 <div class="form-group collapse extra_param">
                     <label class="checkbox-inline">
-                    <input type="checkbox" id="delete1" name="delete1">
-                    Move sync. Deletes messages on source mailbox after a successful transfer.
+                    <input type="checkbox" id="delete1" name="delete1"> Move sync. Deletes messages on source.
                     </label>
                 </div>
 
@@ -67,6 +93,7 @@
                 </fieldset>
             </div>
 
+            <!-- OPTIONS CENTRALES -->
             <div id="parameters" class="col-md-2" >
                 <div><br></div>
                 <div><label class="checkbox-inline"><input type="checkbox" id="dry" name="dry"> Just verbose, no real sync.</label></div>
@@ -78,40 +105,53 @@
                         <button type="button" class="btn btn-default btn-block" data-toggle="collapse" data-target=".extra_param">Show / Hide extra parameters</button>
                 </div>
                 <div><br></div>
-                <div id="button_swap" class="text-center scripton">
-                        <button type="button" class="btn btn-default btn-block" id="swap">Swap Source <span class="glyphicon glyphicon-transfer"></span> Destination</button>
-                </div>
-                <div><br></div>
             </div>
             
+            <!-- ACCOUNT 2 (DESTINATION) -->
             <div id="account2" class="col-md-5" >
                 <fieldset>
                 <legend class="text-center h2">IMAP destination Mailbox</legend>
 
-                <label for="user2">Login</label> (usually an email address)
+                <label for="user2">Login</label>
                 <div class="input-group form-group">
                     <span class="input-group-addon"><i class="glyphicon glyphicon-user"></i></span>
-                    <input type="text" class="form-control input-lg" id="user2" name="user2" tabindex="6" placeholder="Enter login name">
-                </div>
-                <label for="password2">Password</label>
-                <label class="checkbox-inline out">
-                    <input type="checkbox" id="showpassword2"> show password
-                </label>
-                <div class="input-group form-group">
-                    <span class="input-group-addon"><i class="glyphicon glyphicon-lock"></i></span>
-                    <input type="password" class="form-control input-lg" id="password2" name="password2" tabindex="7" placeholder="Enter password">
+                    <input type="text" class="form-control input-lg" id="user2" name="user2" placeholder="Enter login name">
                 </div>
 
-                <label for="host2">IMAP Server hostname</label> (or its IP address)
+                <label for="authmech2">Méthode d'Authentification</label>
+                <div class="form-group">
+                    <select class="form-control input-lg" id="authmech2" name="authmech2" onchange="toggleAuthManual(this, 'grp_pass2', 'grp_token2')">
+                        <option value="PLAIN">Mot de passe classique</option>
+                        <option value="XOAUTH2">Jeton OAuth2 (XOAUTH2)</option>
+                    </select>
+                </div>
+
+                <div id="grp_pass2">
+                    <label for="password2">Password</label>
+                    <label class="checkbox-inline out"><input type="checkbox" id="showpassword2"> show</label>
+                    <div class="input-group form-group">
+                        <span class="input-group-addon"><i class="glyphicon glyphicon-lock"></i></span>
+                        <input type="password" class="form-control input-lg" id="password2" name="password2" placeholder="Enter password">
+                    </div>
+                </div>
+
+                <div id="grp_token2" style="display: none;">
+                    <label for="oauth2_token2">Access Token OAuth2</label>
+                    <div class="input-group form-group">
+                        <span class="input-group-addon"><i class="glyphicon glyphicon-qrcode"></i></span>
+                        <input type="password" class="form-control input-lg" id="oauth2_token2" name="oauth2_token2" placeholder="Enter Access Token">
+                    </div>
+                </div>
+
+                <label for="host2">IMAP Server hostname</label>
                 <div class="input-group form-group">
                     <span class="input-group-addon"><i class="glyphicon glyphicon-cloud"></i></span>
-                    <input type="text" class="form-control input-lg" id="host2" name="host2" tabindex="8" placeholder="Enter IMAP destination server name or IP address">
+                    <input type="text" class="form-control input-lg" id="host2" name="host2" placeholder="Enter IMAP destination server">
                 </div>
                 
                 <div class="form-group collapse extra_param">
                     <label class="checkbox-inline">
-                    <input type="checkbox" id="delete2" name="delete2" tabindex="9">
-                    Strict sync. Deletes messages on destination mailbox that are not at the source mailbox.
+                    <input type="checkbox" id="delete2" name="delete2"> Strict sync. Deletes non-source messages on dest.
                     </label>
                 </div>
                 
@@ -130,13 +170,9 @@
         </div>
 
         <a id="buttons"></a><br>
-        <div class="text-center center-block">
-        Do <b>not close</b> this <b>window</b> (or this tab) <b>during</b> the synchronization, and <b>avoid</b> the <b>sleep</b> mode.
-        </div>
-        <br>
         <div class="row scripton">
             <div class="col-sm-6 padd0" >
-            <button id="bt-sync" type="button" class="btn btn-success btn-lg center-block btn-block" tabindex="11">
+            <button id="bt-sync" type="button" class="btn btn-success btn-lg center-block btn-block">
                 Sync or resync!<br>
                 <span class="glyphicon glyphicon-envelope"></span>
                 <span class="glyphicon glyphicon-arrow-right"></span>
@@ -144,7 +180,7 @@
             </button>
             </div>
             <div class="col-sm-6 padd0" >
-            <button id="bt-abort" type="button" class="btn btn-danger btn-lg center-block btn-block" tabindex="12">
+            <button id="bt-abort" type="button" class="btn btn-danger btn-lg center-block btn-block">
             Stop!<br><span class="glyphicon glyphicon-scissors"></span>
             </button>
             </div>
@@ -157,8 +193,8 @@
                 <div id="progress-bar-done" class="progress-bar progress-bar-success" role="progressbar">Progress bar</div>
                 <div id="progress-bar-left" class="progress-bar progress-bar-info" role="progressbar">Progress bar</div>
         </div>
-        <div class="col-sm-6 well"><h2 class="text-center">Console of imapsync launch</h2><pre id="console"></pre></div>
-        <div class="col-sm-6 well"><h2 class="text-center">Console of Stopping</h2><pre id="abort"></pre></div>
+        <div class="col-sm-6 well"><h2 class="text-center">Console</h2><pre id="console"></pre></div>
+        <div class="col-sm-6 well"><h2 class="text-center">Arrêt</h2><pre id="abort"></pre></div>
     </div>
 </div>
 
@@ -168,6 +204,16 @@
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
 <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
 <script src="/static/imapsync_form.js" type="text/javascript"></script>
+
+<script>
+    // Show/Hide paswword
+    document.getElementById('showpassword1').addEventListener('change', function() {
+        document.getElementById('password1').type = this.checked ? 'text' : 'password';
+    });
+    document.getElementById('showpassword2').addEventListener('change', function() {
+        document.getElementById('password2').type = this.checked ? 'text' : 'password';
+    });
+</script>
 
 </body>
 </html>
