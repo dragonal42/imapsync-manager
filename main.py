@@ -3,9 +3,10 @@ import json
 import asyncio
 import subprocess
 import requests
+import auth
 from urllib.parse import urlencode
 from datetime import datetime
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
