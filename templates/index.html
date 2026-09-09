@@ -4,6 +4,17 @@
     <meta charset="UTF-8">
     <title>IMAPSync Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        function toggleAuth(selectElem, passId, tokenId) {
+            if (selectElem.value === 'XOAUTH2') {
+                document.getElementById(passId).style.display = 'none';
+                document.getElementById(tokenId).style.display = 'block';
+            } else {
+                document.getElementById(passId).style.display = 'block';
+                document.getElementById(tokenId).style.display = 'none';
+            }
+        }
+    </script>
 </head>
 <body class="bg-gray-100 p-8">
     <div class="max-w-5xl mx-auto space-y-6">
@@ -30,21 +41,46 @@
         </div>
 
         <div class="bg-white p-6 rounded shadow">
-            <h2 class="text-xl font-semibold mb-4">Ajouter un compte IMAP à synchroniser (Automatique)</h2>
+            <h2 class="text-xl font-semibold mb-4">Ajouter un compte IMAP (Automatique)</h2>
             <form action="/account/add" method="post" class="space-y-4">
                 <input type="text" name="label" placeholder="Nom du compte (ex: Synchro Perso)" class="border p-2 rounded w-full" required>
                 <div class="grid grid-cols-2 gap-4">
+                    <!-- Source -->
                     <div class="p-4 border rounded bg-gray-50 space-y-2">
                         <h3 class="font-bold text-gray-700">Source (IMAP à vider)</h3>
                         <input type="text" name="host1" placeholder="Hôte (ex: imap.source.com)" class="border p-2 rounded w-full" required>
                         <input type="text" name="user1" placeholder="Utilisateur" class="border p-2 rounded w-full" required>
-                        <input type="password" name="pass1" placeholder="Mot de passe" class="border p-2 rounded w-full" required>
+                        
+                        <select name="authmech1" class="border p-2 rounded w-full bg-white" onchange="toggleAuth(this, 'pass1_container', 'token1_container')">
+                            <option value="PLAIN">Mot de passe classique</option>
+                            <option value="XOAUTH2">OAuth2 (XOAUTH2)</option>
+                        </select>
+                        
+                        <div id="pass1_container">
+                            <input type="password" name="pass1" placeholder="Mot de passe" class="border p-2 rounded w-full">
+                        </div>
+                        <div id="token1_container" style="display: none;">
+                            <input type="password" name="oauth2_token1" placeholder="Jeton d'accès (Access Token)" class="border p-2 rounded w-full border-indigo-400">
+                        </div>
                     </div>
+                    
+                    <!-- Destination -->
                     <div class="p-4 border rounded bg-gray-50 space-y-2">
                         <h3 class="font-bold text-gray-700">Destination (IMAP d'arrivée)</h3>
                         <input type="text" name="host2" placeholder="Hôte (ex: imap.dest.com)" class="border p-2 rounded w-full" required>
                         <input type="text" name="user2" placeholder="Utilisateur" class="border p-2 rounded w-full" required>
-                        <input type="password" name="pass2" placeholder="Mot de passe" class="border p-2 rounded w-full" required>
+                        
+                        <select name="authmech2" class="border p-2 rounded w-full bg-white" onchange="toggleAuth(this, 'pass2_container', 'token2_container')">
+                            <option value="PLAIN">Mot de passe classique</option>
+                            <option value="XOAUTH2">OAuth2 (XOAUTH2)</option>
+                        </select>
+
+                        <div id="pass2_container">
+                            <input type="password" name="pass2" placeholder="Mot de passe" class="border p-2 rounded w-full">
+                        </div>
+                        <div id="token2_container" style="display: none;">
+                            <input type="password" name="oauth2_token2" placeholder="Jeton d'accès (Access Token)" class="border p-2 rounded w-full border-indigo-400">
+                        </div>
                     </div>
                 </div>
                 <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded w-full">Ajouter le compte</button>
@@ -67,7 +103,7 @@
                     {% for acc in config.accounts %}
                     <tr class="border-b">
                         <td class="p-2 font-medium">{{ acc.label }}</td>
-                        <td class="p-2 text-sm">{{ acc.user1 }}@{{ acc.host1 }} <br>➔ {{ acc.user2 }}@{{ acc.host2 }}</td>
+                        <td class="p-2 text-sm">{{ acc.user1 }}@{{ acc.host1 }} ({{ acc.authmech1 }})<br>➔ {{ acc.user2 }}@{{ acc.host2 }} ({{ acc.authmech2 }})</td>
                         <td class="p-2 text-sm">{{ acc.last_run }}</td>
                         <td class="p-2">
                             <span class="px-2 py-1 rounded text-xs text-white 
@@ -87,7 +123,7 @@
                 </tbody>
             </table>
         </div>
-
+        
         <div class="bg-white p-6 rounded shadow">
             <h2 class="text-xl font-semibold mb-4">Rapport d'Erreurs du jour</h2>
             <textarea readonly class="w-full h-40 border p-2 rounded font-mono text-sm bg-gray-900 text-red-400">{{ logs }}</textarea>
