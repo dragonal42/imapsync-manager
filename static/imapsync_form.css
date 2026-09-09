@@ -1,0 +1,20 @@
+body {
+  color: black;
+  background-color: #eeffff;
+}
+
+#account1 { background-color: DodgerBlue ; }
+#account2 { background-color: DarkTurquoise ; }
+
+#progress-txt {
+        text-align: center ;
+        font-size: 1.4em ;
+        margin: 0 0 0px ;
+        height: 50px ;
+}
+.progress, .progress-bar {
+        text-align: center ;
+        font-size: 1.4em ;
+        margin: 0 0 0px ;
+}
+.padd0 { padding-left: 0px ; padding-right: 0px ; }
