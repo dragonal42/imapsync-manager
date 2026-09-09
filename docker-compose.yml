@@ -1,21 +1,98 @@
-#création de l'image : docker build --network host -t dragonal42/imapsync-manager:latest https://github.com/dragonal42/imapsync-manager.git#main
-#puis création de la Stack
+# =============================================================================
+# docker-compose.yml — IMAPSync Manager
+# =============================================================================
+#
+# Ce fichier suppose que le conteneur est exposé via un reverse proxy Caddy
+# (caddy-docker-proxy) tournant dans un AUTRE stack Docker Compose, relié à
+# ce conteneur via un réseau externe partagé.
+#
+# --- ÉTAPES DE MISE EN ROUTE ---
+#
+# 1) Créer le réseau partagé UNE SEULE FOIS sur le serveur (si ce n'est pas
+#    déjà fait pour un autre service) :
+#
+#       docker network create proxy-net
+#
+# 2) Copier .env.example vers .env et renseigner tes propres valeurs :
+#
+#       cp .env.example .env
+#
+# 3) Créer le dossier de persistance sur l'hôte et lui donner les bons droits
+#    (adapter le chemin si besoin) :
+#
+#       sudo mkdir -p /opt/imapsyncmanager
+#       sudo chown -R 1000:1000 /opt/imapsyncmanager   # ou l'UID/GID adapté
+#       sudo chmod -R 750 /opt/imapsyncmanager
+#
+# 4) Adapter le nom de domaine dans le label "caddy:" ci-dessous
+#    (remplacer imapsync.exemple.com par ton propre sous-domaine).
+#
+# 5) (Recommandé) Générer un hash de mot de passe pour protéger l'interface :
+#
+#       docker run --rm caddy:2 caddy hash-password --plaintext "TonMotDePasse"
+#
+#    Copier le hash obtenu dans les labels caddy.basicauth ci-dessous.
+#
+# 6) Lancer :
+#
+#       docker compose up -d --build
+#
+# =============================================================================
+
 services:
   imapsync-manager:
-    image: dragonal42/imapsync-manager:latest
+    build: .
+    image: imapsync-manager:latest
     container_name: imapsync-manager
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+
+    # --- Fuseau horaire et paramètres SMTP (pour le mail de rapport quotidien) ---
+    # Toutes les valeurs viennent du fichier .env (voir .env.example).
     environment:
-      - TZ=Europe/Paris
+      - TZ=${TZ:-Europe/Paris}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_FROM=${SMTP_FROM}
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
+
+    # --- Persistance ---
+    # Le dossier /app/data contient la config (comptes IMAP, réglages) et les
+    # logs d'erreurs du jour. Adapter le chemin hôte à gauche si besoin.
     volumes:
       - /opt/imapsyncmanager:/app/data
-    restart: unless-stopped
 
-#Note sur le serveur : Assure-toi de donner les bons droits au dossier sur l'hôte avant de lancer la stack 
-#(sudo mkdir -p /opt/imapsyncmanager && sudo chmod -R 777 /opt/imapsyncmanager).
+    # --- Pas de "ports:" ici volontairement ---
+    # L'appli n'est PAS exposée directement sur le réseau : seul le reverse
+    # proxy Caddy (autre stack) doit pouvoir l'atteindre, via le réseau
+    # "proxy-net" ci-dessous. Si tu veux un accès direct en plus (déconseillé
+    # pour cette appli qui manipule des identifiants IMAP), décommente :
+    # ports:
+    #   - "8080:8080"
+
+    # --- Réseau partagé avec le reverse proxy ---
+    networks:
+      - proxy-net
+
+    # --- Configuration du reverse proxy Caddy (caddy-docker-proxy) ---
+    # "caddy:" définit le nom de domaine public.
+    # "caddy.reverse_proxy" pointe vers le PORT INTERNE du conteneur (8080),
+    # pas un port publié sur l'hôte.
+    # Les lignes basicauth sont optionnelles mais fortement recommandées :
+    # remplace "alain" par ton identifiant et colle le hash généré à
+    # l'étape 5 ci-dessus (jamais le mot de passe en clair).
+    labels:
+      caddy: imapsync.exemple.com
+      caddy.reverse_proxy: "{{upstreams 8080}}"
+      # caddy.basicauth: "/*"
+      # caddy.basicauth.alain: "$$2a$$14$$REMPLACE_PAR_TON_HASH_CADDY"
+
+# =============================================================================
+# Réseau externe : doit déjà exister (voir étape 1 plus haut).
+# "external: true" indique à Compose de rejoindre ce réseau plutôt que d'en
+# créer un nouveau — c'est ce qui permet à plusieurs stacks indépendants
+# (imapsync-manager, addok, etc.) de partager le même reverse proxy.
+# =============================================================================
+networks:
+  proxy-net:
+    external: true
