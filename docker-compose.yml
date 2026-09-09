@@ -67,8 +67,8 @@ services:
     # proxy Caddy (autre stack) doit pouvoir l'atteindre, via le réseau
     # "proxy-net" ci-dessous. Si tu veux un accès direct en plus (déconseillé
     # pour cette appli qui manipule des identifiants IMAP), décommente :
-    # ports:
-    #   - "8080:8080"
+     ports:
+       - "8080:8080"
 
     # --- Réseau partagé avec le reverse proxy ---
     networks:
