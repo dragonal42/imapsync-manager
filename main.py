@@ -44,7 +44,16 @@ OAUTH_CONFIG = {
 }
 
 # --- FONCTIONS UTILITAIRES ---
-
+def get_redirect_uri(request: Request) -> str:
+    """Génère l'URI de redirection en forçant le protocole HTTPS obligatoire pour Google OAuth2."""
+    # Récupère l'hôte envoyé par Caddy (ex: imapsync.billiar.info)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    
+    # Récupère le schéma envoyé par Caddy, sinon force https par défaut
+    scheme = request.headers.get("x-forwarded-proto", "https")
+    
+    return f"{scheme}://{host}/oauth/callback"
+    
 def load_config():
     """Charge la configuration depuis le fichier JSON. Initialise les valeurs par défaut si inexistant."""
     if not os.path.exists(CONFIG_FILE):
@@ -95,29 +104,24 @@ async def save_oauth_settings(
 
 @app.get("/oauth/login/{provider}")
 async def oauth_login(request: Request, provider: str, target_field: str):
-    """
-    Étape 1 d'OAuth2 : Redirection vers le portail de connexion de Google/Microsoft.
-    target_field permet de se souvenir pour quel champ (ex: oauth2_token1 ou oauth2_token2)
-    l'utilisateur est en train de s'authentifier.
-    """
     config = load_config().get("oauth_apps", {})
     client_id = config.get("google_client_id") if provider == "google" else config.get("ms_client_id")
     
     if not client_id:
         return HTMLResponse("Erreur : Veuillez d'abord configurer le Client ID dans les paramètres globaux.")
     
-    redirect_uri = str(request.base_url).rstrip("/") + "/oauth/callback"
+    # Utilisation de la fonction d'aide pour garantir la bonne URL
+    redirect_uri = get_redirect_uri(request)
     
     params = {
         "client_id": client_id,
-        "response_type": "code", # On demande un "code" d'autorisation temporaire
+        "response_type": "code",
         "redirect_uri": redirect_uri,
         "scope": OAUTH_CONFIG[provider]["scope"],
-        "access_type": "offline", # Indispensable chez Google pour forcer l'envoi d'un refresh_token
-        "prompt": "consent",      # Force l'écran de consentement pour être sûr d'avoir le refresh_token
-        "state": f"{provider}|{target_field}" # On fait transiter le fournisseur et la cible via le paramètre d'état
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": f"{provider}|{target_field}"
     }
-    # Redirige le navigateur du client vers l'URL officielle
     return RedirectResponse(f"{OAUTH_CONFIG[provider]['auth_url']}?{urlencode(params)}")
 
 @app.get("/oauth/callback")
@@ -127,7 +131,9 @@ async def oauth_callback(request: Request, code: str, state: str):
     
     client_id = config.get("google_client_id") if provider == "google" else config.get("ms_client_id")
     client_secret = config.get("google_client_secret") if provider == "google" else config.get("ms_client_secret")
-    redirect_uri = str(request.base_url).rstrip("/") + "/oauth/callback"
+    
+    # Utilisation de la fonction d'aide
+    redirect_uri = get_redirect_uri(request)
 
     data = {
         "client_id": client_id,
@@ -140,7 +146,6 @@ async def oauth_callback(request: Request, code: str, state: str):
     r = requests.post(OAUTH_CONFIG[provider]["token_url"], data=data)
     tokens = r.json()
     
-    # Sérialisation sécurisée des tokens via json.dumps() pour éviter toute rupture JS ou XSS
     access_token_js = json.dumps(tokens.get("access_token", ""))
     refresh_token_js = json.dumps(tokens.get("refresh_token", ""))
     provider_js = json.dumps(provider)
@@ -151,7 +156,6 @@ async def oauth_callback(request: Request, code: str, state: str):
         <p>Fermeture automatique...</p>
         <script>
             if(window.opener) {{
-                // Utilisation directe de la variable JSON injectée sans guillemets superflus
                 window.opener.document.getElementById('{target_field}').value = {access_token_js};
                 
                 let refElem = window.opener.document.getElementById('refresh_{target_field}');
