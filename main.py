@@ -77,15 +77,15 @@ async def update_settings(poll_interval: int = Form(...), report_email: str = Fo
 @app.post("/account/add")
 async def add_account(
     label: str = Form(...),
-    host1: str = Form(...), user1: str = Form(...), pass1: str = Form(...),
-    host2: str = Form(...), user2: str = Form(...), pass2: str = Form(...)
+    host1: str = Form(...), user1: str = Form(...), authmech1: str = Form("PLAIN"), pass1: str = Form(""), oauth2_token1: str = Form(""),
+    host2: str = Form(...), user2: str = Form(...), authmech2: str = Form("PLAIN"), pass2: str = Form(""), oauth2_token2: str = Form("")
 ):
     config = load_config()
     config["accounts"].append({
         "id": int(datetime.now().timestamp()),
         "label": label,
-        "host1": host1, "user1": user1, "pass1": pass1,
-        "host2": host2, "user2": user2, "pass2": pass2,
+        "host1": host1, "user1": user1, "authmech1": authmech1, "pass1": pass1, "oauth2_token1": oauth2_token1,
+        "host2": host2, "user2": user2, "authmech2": authmech2, "pass2": pass2, "oauth2_token2": oauth2_token2,
         "last_run": "Jamais",
         "status": "En attente"
     })
@@ -113,10 +113,25 @@ async def cgi_imapsync(request: Request):
         return HTMLResponse(content="Aborted by user.\n")
 
     cmd = ["imapsync"]
-    for f in ["host1", "user1", "password1", "host2", "user2", "password2"]:
+    
+    # Hôtes et utilisateurs
+    for f in ["host1", "user1", "host2", "user2"]:
         if form_data.get(f):
             cmd.extend([f"--{f}", form_data.get(f)])
+            
+    # Authentification Source
+    if form_data.get("authmech1") == "XOAUTH2":
+        cmd.extend(["--authmech1", "XOAUTH2", "--oauth2_token1", form_data.get("oauth2_token1", "")])
+    elif form_data.get("password1"):
+        cmd.extend(["--password1", form_data.get("password1")])
+
+    # Authentification Destination
+    if form_data.get("authmech2") == "XOAUTH2":
+        cmd.extend(["--authmech2", "XOAUTH2", "--oauth2_token2", form_data.get("oauth2_token2", "")])
+    elif form_data.get("password2"):
+        cmd.extend(["--password2", form_data.get("password2")])
     
+    # Options additionnelles
     if form_data.get("delete1") == "on": cmd.append("--delete1")
     if form_data.get("delete2") == "on": cmd.append("--delete2")
     if form_data.get("dry") == "on": cmd.append("--dry")
@@ -126,7 +141,6 @@ async def cgi_imapsync(request: Request):
     
     for f in ["subfolder1", "subfolder2", "extra"]:
         if form_data.get(f):
-            # for extra parameters we just append as is if provided manually
             if f == "extra":
                 extras = form_data.get(f).split()
                 cmd.extend(extras)
@@ -155,7 +169,6 @@ async def cgi_imapsync(request: Request):
 
     return StreamingResponse(stream_output(), media_type="text/plain")
 
-
 async def sync_loop():
     while True:
         config = load_config()
@@ -165,10 +178,20 @@ async def sync_loop():
             label = acc["label"]
             cmd = [
                 "imapsync",
-                "--host1", acc["host1"], "--user1", acc["user1"], "--password1", acc["pass1"],
-                "--host2", acc["host2"], "--user2", acc["user2"], "--password2", acc["pass2"],
+                "--host1", acc["host1"], "--user1", acc["user1"],
+                "--host2", acc["host2"], "--user2", acc["user2"],
                 "--delete1", "--ssl1", "--ssl2"
             ]
+            
+            if acc.get("authmech1") == "XOAUTH2":
+                cmd.extend(["--authmech1", "XOAUTH2", "--oauth2_token1", acc.get("oauth2_token1", "")])
+            else:
+                cmd.extend(["--password1", acc.get("pass1", "")])
+                
+            if acc.get("authmech2") == "XOAUTH2":
+                cmd.extend(["--authmech2", "XOAUTH2", "--oauth2_token2", acc.get("oauth2_token2", "")])
+            else:
+                cmd.extend(["--password2", acc.get("pass2", "")])
             
             acc["status"] = "Synchronisation..."
             save_config(config)
