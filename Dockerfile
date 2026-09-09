@@ -33,8 +33,8 @@ RUN apt-get update && apt-get install -y \
     msmtp-mta \
     gettext-base \
     cron \
-    && rm -rf /var/lib/apt/lists/*
-    && chmod +x /usr/bin/imapsync \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod +x /usr/bin/imapsync 
 
 #&& wget https://raw.githubusercontent.com/imapsync/imapsync/master/imapsync -O /usr/bin/imapsync \
     
