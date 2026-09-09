@@ -3,7 +3,6 @@ import json
 import asyncio
 import subprocess
 import requests
-import auth
 from urllib.parse import urlencode
 from datetime import datetime
 from fastapi import FastAPI, Request, Form, Depends, Cookie
