@@ -48,6 +48,7 @@ COPY templates /app/templates
 COPY static /app/static
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh /app/daily_mail.sh
 
 EXPOSE 8080
 
