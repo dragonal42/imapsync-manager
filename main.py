@@ -192,7 +192,10 @@ def refresh_oauth_token(provider: str, refresh_token: str):
 
 
 # --- INTERFACES UTILISATEUR ---
-
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+    
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Affiche le tableau de bord principal (Mode Automatique)."""
@@ -242,7 +245,6 @@ async def delete_account(account_id: int):
 
 
 # --- MOTEUR DE SYNCHRONISATION ---
-
 @app.post("/cgi-bin/imapsync")
 async def cgi_imapsync(request: Request):
     """
@@ -367,3 +369,4 @@ async def sync_loop():
 async def startup_event():
     """Démarre la boucle de synchronisation dès que le serveur Uvicorn est prêt."""
     asyncio.create_task(sync_loop())
+
