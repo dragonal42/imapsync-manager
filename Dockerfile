@@ -36,7 +36,8 @@ RUN apt-get update && apt-get install -y \
     cron \
     && wget https://raw.githubusercontent.com/imapsync/imapsync/master/imapsync -O /usr/bin/imapsync \
     && chmod +x /usr/bin/imapsync \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart requests --break-system-packages
 
 WORKDIR /app
 
