@@ -77,7 +77,7 @@ def log_error(label, message):
 
 # --- MECANISME OAUTH2 ---
 
-@app.post("/oauth/settings", dependencies=[Depends(auth.require_auth)])
+@app.post("/oauth/settings")
 async def save_oauth_settings(
     google_client_id: str = Form(""), google_client_secret: str = Form(""),
     ms_client_id: str = Form(""), ms_client_secret: str = Form("")
@@ -93,7 +93,7 @@ async def save_oauth_settings(
     save_config(config)
     return RedirectResponse(url="/", status_code=303)
 
-@app.get("/oauth/login/{provider}", dependencies=[Depends(auth.require_auth)])
+@app.get("/oauth/login/{provider}")
 async def oauth_login(request: Request, provider: str, target_field: str):
     """
     Étape 1 d'OAuth2 : Redirection vers le portail de connexion de Google/Microsoft.
@@ -120,7 +120,7 @@ async def oauth_login(request: Request, provider: str, target_field: str):
     # Redirige le navigateur du client vers l'URL officielle
     return RedirectResponse(f"{OAUTH_CONFIG[provider]['auth_url']}?{urlencode(params)}")
 
-@app.get("/oauth/callback", dependencies=[Depends(auth.require_auth)])
+@app.get("/oauth/callback")
 async def oauth_callback(request: Request, code: str, state: str):
     provider, target_field = state.split("|")
     config = load_config().get("oauth_apps", {})
@@ -195,7 +195,7 @@ def refresh_oauth_token(provider: str, refresh_token: str):
 async def health():
     return {"status": "ok"}
     
-@app.get("/", response_class=HTMLResponse, dependencies=[Depends(auth.require_auth)])
+@app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Affiche le tableau de bord principal (Mode Automatique)."""
     config = load_config()
@@ -203,12 +203,12 @@ async def index(request: Request):
     # On passe explicitement request=request (obligatoire sur FastAPI récent)
     return templates.TemplateResponse(request=request, name="index.html", context={"config": config, "logs": logs})
 
-@app.get("/manual", response_class=HTMLResponse, dependencies=[Depends(auth.require_auth)])
+@app.get("/manual", response_class=HTMLResponse)
 async def manual(request: Request):
     """Affiche l'interface de synchronisation manuelle."""
     return templates.TemplateResponse(request=request, name="manual.html", context={})
 
-@app.post("/settings", dependencies=[Depends(auth.require_auth)])
+@app.post("/settings")
 async def update_settings(poll_interval: int = Form(...), report_email: str = Form(...)):
     """Met à jour les paramètres globaux (fréquence de synchro, email)."""
     config = load_config()
@@ -217,7 +217,7 @@ async def update_settings(poll_interval: int = Form(...), report_email: str = Fo
     save_config(config)
     return RedirectResponse(url="/", status_code=303)
 
-@app.post("/account/add", dependencies=[Depends(auth.require_auth)])
+@app.post("/account/add")
 async def add_account(
     label: str = Form(...),
     host1: str = Form(...), user1: str = Form(...), authmech1: str = Form("PLAIN"), pass1: str = Form(""), oauth2_token1: str = Form(""), refresh_oauth2_token1: str = Form(""), provider_oauth2_token1: str = Form(""),
@@ -234,7 +234,7 @@ async def add_account(
     save_config(config)
     return RedirectResponse(url="/", status_code=303)
 
-@app.post("/account/delete/{account_id}", dependencies=[Depends(auth.require_auth)])
+@app.post("/account/delete/{account_id}")
 async def delete_account(account_id: int):
     """Supprime une paire de comptes de la configuration."""
     config = load_config()
@@ -242,43 +242,8 @@ async def delete_account(account_id: int):
     save_config(config)
     return RedirectResponse(url="/", status_code=303)
 
-@app.exception_handler(auth.AuthRedirect)
-async def _auth_redirect(request: Request, exc: auth.AuthRedirect):
-    return RedirectResponse(url="/login")
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, sent: str = "", error: str = ""):
-    return templates.TemplateResponse(request=request, name="login.html",
-        context={"sent": sent, "error": error})
-
-@app.post("/login/request")
-async def login_request():
-    email = load_config().get("report_email", "")
-    if not email:
-        return RedirectResponse(url="/login?error=noemail", status_code=303)
-    auth.generate_and_send_code(email)
-    return RedirectResponse(url="/login?sent=1", status_code=303)
-
-@app.post("/login/verify")
-async def login_verify(code: str = Form(...)):
-    email = load_config().get("report_email", "")
-    if not auth.verify_code(email, code):
-        return RedirectResponse(url="/login?error=1", status_code=303)
-    token = auth.create_session()
-    resp = RedirectResponse(url="/", status_code=303)
-    resp.set_cookie(auth.SESSION_COOKIE, token, httponly=True, samesite="lax", max_age=auth.SESSION_TTL)
-    return resp
-
-@app.get("/logout")
-async def logout(imapsync_session: str = Cookie(default=None)):
-    if imapsync_session:
-        auth.destroy_session(imapsync_session)
-    resp = RedirectResponse(url="/login")
-    resp.delete_cookie(auth.SESSION_COOKIE)
-    return resp
-
 # --- MOTEUR DE SYNCHRONISATION ---
-@app.post("/cgi-bin/imapsync", dependencies=[Depends(auth.require_auth)])
+@app.post("/cgi-bin/imapsync")
 async def cgi_imapsync(request: Request):
     """
     Simule l'ancien script CGI Perl d'imapsync online.
