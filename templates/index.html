@@ -5,14 +5,19 @@
     <title>IMAPSync Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        function toggleAuth(selectElem, passId, tokenId) {
+        function toggleAuth(selectElem, passId, tokenContainerId) {
             if (selectElem.value === 'XOAUTH2') {
                 document.getElementById(passId).style.display = 'none';
-                document.getElementById(tokenId).style.display = 'block';
+                document.getElementById(tokenContainerId).style.display = 'block';
             } else {
                 document.getElementById(passId).style.display = 'block';
-                document.getElementById(tokenId).style.display = 'none';
+                document.getElementById(tokenContainerId).style.display = 'none';
             }
+        }
+        function openOAuth(provider, targetField) {
+            let width = 500; let height = 600;
+            let left = (screen.width - width) / 2; let top = (screen.height - height) / 2;
+            window.open(`/oauth/login/${provider}?target_field=${targetField}`, 'OAuth', `width=${width},height=${height},top=${top},left=${left}`);
         }
     </script>
 </head>
@@ -20,76 +25,90 @@
     <div class="max-w-5xl mx-auto space-y-6">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">Gestionnaire de Synchronisation IMAP</h1>
-            <a href="/manual" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition">
-                Interface Manuelle ➔
-            </a>
+            <a href="/manual" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition">Mode Manuel ➔</a>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+            <!-- Paramètres Globaux -->
+            <div class="bg-white p-6 rounded shadow">
+                <h2 class="text-xl font-semibold mb-4">Paramètres Globaux</h2>
+                <form action="/settings" method="post" class="space-y-4">
+                    <div><label class="block text-sm">Intervalle (min)</label><input type="number" name="poll_interval" value="{{ config.poll_interval }}" class="border p-2 rounded w-full" required></div>
+                    <div><label class="block text-sm">E-mail alertes</label><input type="email" name="report_email" value="{{ config.report_email }}" class="border p-2 rounded w-full"></div>
+                    <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded">Enregistrer</button>
+                </form>
+            </div>
+            
+            <!-- Config OAuth2 (Clés API) -->
+            <div class="bg-white p-6 rounded shadow border-l-4 border-yellow-500">
+                <h2 class="text-xl font-semibold mb-4">Clés d'API OAuth2 (Serveur)</h2>
+                <form action="/oauth/settings" method="post" class="space-y-2 text-sm">
+                    <input type="text" name="google_client_id" value="{{ config.oauth_apps.google_client_id }}" placeholder="Google Client ID" class="border p-1 rounded w-full">
+                    <input type="password" name="google_client_secret" value="{{ config.oauth_apps.google_client_secret }}" placeholder="Google Client Secret" class="border p-1 rounded w-full">
+                    <hr>
+                    <input type="text" name="ms_client_id" value="{{ config.oauth_apps.ms_client_id }}" placeholder="Microsoft Client ID" class="border p-1 rounded w-full">
+                    <input type="password" name="ms_client_secret" value="{{ config.oauth_apps.ms_client_secret }}" placeholder="Microsoft Client Secret" class="border p-1 rounded w-full">
+                    <button type="submit" class="bg-yellow-600 text-white px-4 py-2 rounded mt-2">Sauvegarder Clés</button>
+                </form>
+            </div>
         </div>
 
         <div class="bg-white p-6 rounded shadow">
-            <h2 class="text-xl font-semibold mb-4">Paramètres Globaux</h2>
-            <form action="/settings" method="post" class="flex gap-4 items-end">
-                <div>
-                    <label class="block text-sm font-medium">Intervalle de scrutation (min)</label>
-                    <input type="number" name="poll_interval" value="{{ config.poll_interval }}" class="border p-2 rounded w-32" required>
-                </div>
-                <div class="flex-grow">
-                    <label class="block text-sm font-medium">E-mail de rapport quotidien</label>
-                    <input type="email" name="report_email" value="{{ config.report_email }}" class="border p-2 rounded w-full" required>
-                </div>
-                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded">Enregistrer</button>
-            </form>
-        </div>
-
-        <div class="bg-white p-6 rounded shadow">
-            <h2 class="text-xl font-semibold mb-4">Ajouter un compte IMAP (Automatique)</h2>
+            <h2 class="text-xl font-semibold mb-4">Ajouter un compte (Automatique avec Refresh Token)</h2>
             <form action="/account/add" method="post" class="space-y-4">
-                <input type="text" name="label" placeholder="Nom du compte (ex: Synchro Perso)" class="border p-2 rounded w-full" required>
+                <input type="text" name="label" placeholder="Nom du compte" class="border p-2 rounded w-full" required>
                 <div class="grid grid-cols-2 gap-4">
+                    
                     <!-- Source -->
                     <div class="p-4 border rounded bg-gray-50 space-y-2">
-                        <h3 class="font-bold text-gray-700">Source (IMAP à vider)</h3>
-                        <input type="text" name="host1" placeholder="Hôte (ex: imap.source.com)" class="border p-2 rounded w-full" required>
-                        <input type="text" name="user1" placeholder="Utilisateur" class="border p-2 rounded w-full" required>
-                        
-                        <select name="authmech1" class="border p-2 rounded w-full bg-white" onchange="toggleAuth(this, 'pass1_container', 'token1_container')">
-                            <option value="PLAIN">Mot de passe classique</option>
-                            <option value="XOAUTH2">OAuth2 (XOAUTH2)</option>
+                        <h3 class="font-bold">Source</h3>
+                        <input type="text" name="host1" placeholder="Hôte (imap.gmail.com)" class="border p-2 rounded w-full" required>
+                        <input type="text" name="user1" placeholder="Email Utilisateur" class="border p-2 rounded w-full" required>
+                        <select name="authmech1" class="border p-2 rounded w-full" onchange="toggleAuth(this, 'pass1', 'tok_box1')">
+                            <option value="PLAIN">Mot de passe classique</option><option value="XOAUTH2">OAuth2 (Gmail/Office365)</option>
                         </select>
+                        <input type="password" name="pass1" id="pass1" placeholder="Mot de passe" class="border p-2 rounded w-full">
                         
-                        <div id="pass1_container">
-                            <input type="password" name="pass1" placeholder="Mot de passe" class="border p-2 rounded w-full">
-                        </div>
-                        <div id="token1_container" style="display: none;">
-                            <input type="password" name="oauth2_token1" placeholder="Jeton d'accès (Access Token)" class="border p-2 rounded w-full border-indigo-400">
+                        <div id="tok_box1" style="display: none;" class="p-2 border border-indigo-300 bg-indigo-50 rounded">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" onclick="openOAuth('google', 'oauth2_token1')" class="bg-red-500 text-white text-xs px-2 py-1 rounded">Login Google</button>
+                                <button type="button" onclick="openOAuth('microsoft', 'oauth2_token1')" class="bg-blue-600 text-white text-xs px-2 py-1 rounded">Login Microsoft</button>
+                            </div>
+                            <input type="text" readonly name="oauth2_token1" id="oauth2_token1" placeholder="Access Token (auto)" class="border p-1 w-full text-xs mb-1">
+                            <input type="text" readonly name="refresh_oauth2_token1" id="refresh_oauth2_token1" placeholder="Refresh Token (auto)" class="border p-1 w-full text-xs mb-1">
+                            <input type="hidden" name="provider_oauth2_token1" id="provider_oauth2_token1">
                         </div>
                     </div>
                     
                     <!-- Destination -->
                     <div class="p-4 border rounded bg-gray-50 space-y-2">
-                        <h3 class="font-bold text-gray-700">Destination (IMAP d'arrivée)</h3>
-                        <input type="text" name="host2" placeholder="Hôte (ex: imap.dest.com)" class="border p-2 rounded w-full" required>
-                        <input type="text" name="user2" placeholder="Utilisateur" class="border p-2 rounded w-full" required>
-                        
-                        <select name="authmech2" class="border p-2 rounded w-full bg-white" onchange="toggleAuth(this, 'pass2_container', 'token2_container')">
-                            <option value="PLAIN">Mot de passe classique</option>
-                            <option value="XOAUTH2">OAuth2 (XOAUTH2)</option>
+                        <h3 class="font-bold">Destination</h3>
+                        <input type="text" name="host2" placeholder="Hôte (outlook.office365.com)" class="border p-2 rounded w-full" required>
+                        <input type="text" name="user2" placeholder="Email Utilisateur" class="border p-2 rounded w-full" required>
+                        <select name="authmech2" class="border p-2 rounded w-full" onchange="toggleAuth(this, 'pass2', 'tok_box2')">
+                            <option value="PLAIN">Mot de passe classique</option><option value="XOAUTH2">OAuth2 (Gmail/Office365)</option>
                         </select>
-
-                        <div id="pass2_container">
-                            <input type="password" name="pass2" placeholder="Mot de passe" class="border p-2 rounded w-full">
-                        </div>
-                        <div id="token2_container" style="display: none;">
-                            <input type="password" name="oauth2_token2" placeholder="Jeton d'accès (Access Token)" class="border p-2 rounded w-full border-indigo-400">
+                        <input type="password" name="pass2" id="pass2" placeholder="Mot de passe" class="border p-2 rounded w-full">
+                        
+                        <div id="tok_box2" style="display: none;" class="p-2 border border-indigo-300 bg-indigo-50 rounded">
+                            <div class="flex gap-2 mb-2">
+                                <button type="button" onclick="openOAuth('google', 'oauth2_token2')" class="bg-red-500 text-white text-xs px-2 py-1 rounded">Login Google</button>
+                                <button type="button" onclick="openOAuth('microsoft', 'oauth2_token2')" class="bg-blue-600 text-white text-xs px-2 py-1 rounded">Login Microsoft</button>
+                            </div>
+                            <input type="text" readonly name="oauth2_token2" id="oauth2_token2" placeholder="Access Token (auto)" class="border p-1 w-full text-xs mb-1">
+                            <input type="text" readonly name="refresh_oauth2_token2" id="refresh_oauth2_token2" placeholder="Refresh Token (auto)" class="border p-1 w-full text-xs mb-1">
+                            <input type="hidden" name="provider_oauth2_token2" id="provider_oauth2_token2">
                         </div>
                     </div>
                 </div>
-                <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded w-full">Ajouter le compte</button>
+                <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded w-full">Sauvegarder et Lancer</button>
             </form>
         </div>
 
         <div class="bg-white p-6 rounded shadow">
             <h2 class="text-xl font-semibold mb-4">Comptes en cours de gestion</h2>
-            <table class="w-full text-left border-collapse">
+            <!-- Reprendre la table existante identique au précédent index.html -->
+             <table class="w-full text-left border-collapse">
                 <thead>
                     <tr class="border-b">
                         <th class="p-2">Nom</th>
@@ -103,7 +122,7 @@
                     {% for acc in config.accounts %}
                     <tr class="border-b">
                         <td class="p-2 font-medium">{{ acc.label }}</td>
-                        <td class="p-2 text-sm">{{ acc.user1 }}@{{ acc.host1 }} ({{ acc.authmech1 }})<br>➔ {{ acc.user2 }}@{{ acc.host2 }} ({{ acc.authmech2 }})</td>
+                        <td class="p-2 text-sm">{{ acc.user1 }}<br>➔ {{ acc.user2 }}</td>
                         <td class="p-2 text-sm">{{ acc.last_run }}</td>
                         <td class="p-2">
                             <span class="px-2 py-1 rounded text-xs text-white 
@@ -122,11 +141,6 @@
                     {% endfor %}
                 </tbody>
             </table>
-        </div>
-        
-        <div class="bg-white p-6 rounded shadow">
-            <h2 class="text-xl font-semibold mb-4">Rapport d'Erreurs du jour</h2>
-            <textarea readonly class="w-full h-40 border p-2 rounded font-mono text-sm bg-gray-900 text-red-400">{{ logs }}</textarea>
         </div>
     </div>
 </body>
