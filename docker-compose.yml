@@ -1,18 +1,16 @@
-version: '3.8'
-
 services:
   imapsync-manager:
-    image: dragonal42/imapsync-manager:latest
+    build: https://github.com/dragonal42/imapsync-manager.git#main
     container_name: imapsync-manager
     ports:
       - "8080:8080"
     environment:
       - TZ=Europe/Paris
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_FROM=${SMTP_FROM}
-      - SMTP_USER=${SMTP_USER}
-      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_HOST=mail.billiar.info
+      - SMTP_PORT=587
+      - SMTP_FROM=alain@billiar.info
+      - SMTP_USER=alain@billiar.info
+      - SMTP_PASS=Chavaler&43
     volumes:
       - ./data:/app/data
     restart: unless-stopped
