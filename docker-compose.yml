@@ -14,5 +14,5 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
     volumes:
-      - ./data:/app/data
+      - /opt/imapsyncmanager:/app/data
     restart: unless-stopped
