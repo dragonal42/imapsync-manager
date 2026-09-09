@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${PORTSYNC}:${PORTSYNC}"
+      - ${PORTSYNC}
 
     environment:
       - TZ=${TZ:-Europe/Paris}
