@@ -45,10 +45,11 @@ COPY main.py /app/main.py
 COPY msmtp.conf.template /app/msmtp.conf.template
 COPY templates /app/templates
 COPY static /app/static
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
 COPY imapsync /usr/bin/imapsync
 RUN chmod +x /usr/bin/imapsync
+COPY entrypoint.sh /app/entrypoint.sh
+COPY daily_mail.sh /app/daily_mail.sh
+RUN chmod +x /app/entrypoint.sh /app/daily_mail.sh
 
 EXPOSE 8080
 
