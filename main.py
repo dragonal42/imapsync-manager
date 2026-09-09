@@ -121,11 +121,8 @@ async def oauth_login(request: Request, provider: str, target_field: str):
     return RedirectResponse(f"{OAUTH_CONFIG[provider]['auth_url']}?{urlencode(params)}")
 
 @app.get("/oauth/callback")
+@app.get("/oauth/callback")
 async def oauth_callback(request: Request, code: str, state: str):
-    """
-    Étape 2 d'OAuth2 : Google/Microsoft redirige l'utilisateur ici avec le 'code' secret.
-    Le serveur échange immédiatement ce code contre les vrais jetons d'accès.
-    """
     provider, target_field = state.split("|")
     config = load_config().get("oauth_apps", {})
     
@@ -133,7 +130,6 @@ async def oauth_callback(request: Request, code: str, state: str):
     client_secret = config.get("google_client_secret") if provider == "google" else config.get("ms_client_secret")
     redirect_uri = str(request.base_url).rstrip("/") + "/oauth/callback"
 
-    # Requête serveur-à-serveur pour récupérer les tokens
     data = {
         "client_id": client_id,
         "client_secret": client_secret,
@@ -141,33 +137,34 @@ async def oauth_callback(request: Request, code: str, state: str):
         "grant_type": "authorization_code",
         "redirect_uri": redirect_uri
     }
+
     r = requests.post(OAUTH_CONFIG[provider]["token_url"], data=data)
     tokens = r.json()
     
-    # Création d'une page HTML éphémère.
-    # Puisque cette page a été ouverte via un Pop-up (window.open), elle utilise
-    # window.opener pour manipuler le DOM de la page parente et injecter les tokens
-    # directement dans le formulaire, puis elle se ferme toute seule.
+    # Sérialisation sécurisée des tokens via json.dumps() pour éviter toute rupture JS ou XSS
+    access_token_js = json.dumps(tokens.get("access_token", ""))
+    refresh_token_js = json.dumps(tokens.get("refresh_token", ""))
+    provider_js = json.dumps(provider)
+
     html_content = f"""
     <html><body>
         <h3>Authentification réussie !</h3>
         <p>Fermeture automatique...</p>
         <script>
             if(window.opener) {{
-                // Injecte l'Access Token
-                window.opener.document.getElementById('{target_field}').value = '{tokens.get("access_token", "")}';
+                // Utilisation directe de la variable JSON injectée sans guillemets superflus
+                window.opener.document.getElementById('{target_field}').value = {access_token_js};
                 
-                // Injecte le Refresh Token (s'il existe dans le formulaire, ce qui est le cas en mode Auto)
-                if (window.opener.document.getElementById('refresh_{target_field}')) {{
-                    window.opener.document.getElementById('refresh_{target_field}').value = '{tokens.get("refresh_token", "")}';
+                let refElem = window.opener.document.getElementById('refresh_{target_field}');
+                if (refElem) {{
+                    refElem.value = {refresh_token_js};
                 }}
                 
-                // Sauvegarde le nom du fournisseur (google ou microsoft)
-                if (window.opener.document.getElementById('provider_{target_field}')) {{
-                    window.opener.document.getElementById('provider_{target_field}').value = '{provider}';
+                let provElem = window.opener.document.getElementById('provider_{target_field}');
+                if (provElem) {{
+                    provElem.value = {provider_js};
                 }}
                 
-                // Ferme le popup
                 window.close();
             }}
         </script>
