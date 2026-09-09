@@ -1,11 +1,13 @@
 version: '3.8'
+
 services:
   imapsync-manager:
-    build: .
+    image: dragonal42/imapsync-manager:latest
     container_name: imapsync-manager
     ports:
       - "8080:8080"
     environment:
+      - TZ=Europe/Paris
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_FROM=${SMTP_FROM}
