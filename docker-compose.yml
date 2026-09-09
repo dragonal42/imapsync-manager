@@ -1,16 +1,18 @@
+#création de l'image : docker build --network host -t dragonal42/imapsync-manager:latest https://github.com/dragonal42/imapsync-manager.git#main
+#puis création de la Stack
 services:
   imapsync-manager:
-    build: https://github.com/dragonal42/imapsync-manager.git#main
+    image: dragonal42/imapsync-manager:latest
     container_name: imapsync-manager
     ports:
       - "8080:8080"
     environment:
       - TZ=Europe/Paris
-      - SMTP_HOST=mail.billiar.info
-      - SMTP_PORT=587
-      - SMTP_FROM=alain@billiar.info
-      - SMTP_USER=alain@billiar.info
-      - SMTP_PASS=Chavaler&43
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
     volumes:
       - ./data:/app/data
     restart: unless-stopped
