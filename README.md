@@ -1,14 +1,108 @@
-# 🔄 IMAPSync ManagerInterface web autonome basée sur Docker, FastAPI et imapsync pour automatiser et piloter la synchronisation, la migration et le nettoyage de comptes IMAP en toute simplicité.  🚀 Fonctionnalités principalesMode Automatique : Scrute à intervalle régulier, synchronise les boîtes mail, vide la source si demandé et envoie un rapport quotidien d'erreurs par e-mail à 23h59.Mode Manuel : Interface graphique interactive reprenant l'outil standard avec barres de progression en temps réel, logs dynamiques et bouton d'annulation d'urgence.Support OAuth2 (XOAUTH2) : Intégration complète pour Gmail et Office 365 avec un système de pop-up d'authentification et un renouvellement automatique du refresh_token.Persistance robuste : Stockage des configurations et des rapports sur l'hôte pour survivre aux mises à jour de conteneurs.🛠️ Installation & Déploiement (Dockhand / Docker Compose)Clonez ce dépôt sur votre serveur :Bashgit clone https://github.com/dragonal42/imapsync-manager.git
+# 🔄 IMAPSync Manager
+
+**IMAPSync Manager** est une interface web autonome basée sur **Docker**, **FastAPI** et **imapsync** permettant d’automatiser et de piloter facilement la synchronisation, la migration et le nettoyage de comptes IMAP.
+
+---
+
+## ✨ Fonctionnalités
+
+### 🤖 Mode automatique
+
+- Scrute les comptes à intervalle régulier.
+- Synchronise automatiquement les boîtes mail.
+- Peut vider la boîte source après synchronisation si cette option est activée.
+- Génère un rapport quotidien des erreurs.
+- Envoie automatiquement ce rapport par e-mail à **23h59**.
+
+### 🖥️ Mode manuel
+
+- Interface graphique interactive.
+- Utilisation d’**imapsync** directement depuis l’interface web.
+- Barres de progression en temps réel.
+- Affichage dynamique des logs.
+- Bouton d’annulation d’urgence pour interrompre une synchronisation en cours.
+
+### 🔐 OAuth2 / XOAUTH2
+
+Prise en charge de l’authentification moderne pour :
+
+- **Gmail**
+- **Microsoft Office 365**
+
+L’interface intègre :
+
+- une fenêtre d’authentification OAuth2 ;
+- la récupération du `refresh_token` ;
+- le renouvellement automatique des jetons d’accès.
+
+### 💾 Persistance des données
+
+Les configurations et rapports sont stockés sur l’hôte afin de rester disponibles après :
+
+- un redémarrage du conteneur ;
+- une recréation de la stack Docker ;
+- une mise à jour de l’application.
+
+---
+
+## 🧰 Prérequis
+
+Avant l’installation, assurez-vous de disposer de :
+
+- Docker ;
+- Docker Compose ou un gestionnaire compatible comme **Dockhand** ;
+- un accès aux serveurs IMAP à synchroniser ;
+- éventuellement un serveur SMTP pour l’envoi des rapports.
+
+---
+
+## 🚀 Installation
+
+### 1. Cloner le dépôt
+
+```bash
+git clone https://github.com/dragonal42/imapsync-manager.git
 cd imapsync-manager
-Préparez le dossier de persistance sur l'hôte :Bashsudo mkdir -p /opt/imapsyncmanager
+```
+
+### 2. Préparer le dossier de persistance
+
+Créez le dossier utilisé pour conserver les données de l’application :
+
+```bash
+sudo mkdir -p /opt/imapsyncmanager
 sudo chmod -R 777 /opt/imapsyncmanager
-Créez un fichier .env basé sur l'exemple pour configurer l'envoi des e-mails SMTP :Extrait de codeSMTP_HOST=smtp.exemple.com
+```
+
+> [!NOTE]
+> Le dossier `/opt/imapsyncmanager` est monté dans le conteneur sous `/app/data`.
+
+### 3. Configurer les variables d’environnement
+
+Créez un fichier `.env` à la racine du projet.
+
+Exemple :
+
+```env
+SMTP_HOST=smtp.exemple.com
 SMTP_PORT=587
 SMTP_FROM=imapsync@exemple.com
 SMTP_USER=mon_utilisateur_smtp
 SMTP_PASS=mon_mot_de_passe_secret
 TZ=Europe/Paris
-Lancez la stack via votre gestionnaire (comme Dockhand ou en ligne de commande) :YAMLservices:
+```
+
+> [!IMPORTANT]
+> Ne versionnez jamais votre fichier `.env` s’il contient des identifiants ou mots de passe réels.
+
+---
+
+## 🐳 Docker Compose
+
+Exemple de configuration :
+
+```yaml
+services:
   imapsync-manager:
     build: .
     container_name: imapsync-manager
@@ -24,4 +118,84 @@ Lancez la stack via votre gestionnaire (comme Dockhand ou en ligne de commande) 
     volumes:
       - /opt/imapsyncmanager:/app/data
     restart: unless-stopped
-Accédez ensuite à l'application sur http://<ip-du-serveur>:8080.🙏 RemerciementsUn immense merci à Gilles LAMIRAL pour la création et la maintenance de l'outil universel imapsync, dont le code et la licence ouverte rendent ce gestionnaire possible.  
+```
+
+Lancez ensuite la stack avec votre gestionnaire Docker habituel ou en ligne de commande :
+
+```bash
+docker compose up -d
+```
+
+---
+
+## 🌐 Accès à l’interface
+
+Une fois le conteneur démarré, ouvrez :
+
+```text
+http://<ip-du-serveur>:8080
+```
+
+Exemple :
+
+```text
+http://192.168.1.10:8080
+```
+
+---
+
+## 📂 Persistance
+
+Les données persistantes sont stockées dans :
+
+```text
+/opt/imapsyncmanager
+```
+
+et montées dans le conteneur sous :
+
+```text
+/app/data
+```
+
+Cela permet de conserver les configurations et rapports indépendamment du cycle de vie du conteneur Docker.
+
+---
+
+## 🔧 Mise à jour
+
+Pour récupérer la dernière version du projet :
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+---
+
+## 📜 Logs
+
+Pour consulter les logs du conteneur :
+
+```bash
+docker compose logs -f imapsync-manager
+```
+
+---
+
+## 🙏 Remerciements
+
+Un immense merci à **Gilles LAMIRAL** pour la création et la maintenance de **imapsync**.
+
+Son travail, ainsi que la licence ouverte d’imapsync, rendent possible la création de ce gestionnaire web.
+
+Pour en savoir plus sur imapsync :
+
+https://imapsync.lamiral.info/
+
+---
+
+## ❤️ Projet
+
+Si ce projet vous est utile, n’hésitez pas à lui laisser une ⭐ sur GitHub.
