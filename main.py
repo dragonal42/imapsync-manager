@@ -45,14 +45,8 @@ OAUTH_CONFIG = {
 
 # --- FONCTIONS UTILITAIRES ---
 def get_redirect_uri(request: Request) -> str:
-    """Génère l'URI de redirection en forçant le protocole HTTPS obligatoire pour Google OAuth2."""
-    # Récupère l'hôte envoyé par Caddy (ex: imapsync.billiar.info)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-    
-    # Récupère le schéma envoyé par Caddy, sinon force https par défaut
-    scheme = request.headers.get("x-forwarded-proto", "https")
-    
-    return f"{scheme}://{host}/oauth/callback"
+    host = request.headers.get("x-forwarded-host", "imapsync.billiar.info").split(":")[0]
+    return f"https://{host}/oauth/callback"
     
 def load_config():
     """Charge la configuration depuis le fichier JSON. Initialise les valeurs par défaut si inexistant."""
