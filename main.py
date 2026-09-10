@@ -170,7 +170,10 @@ async def access_control(request, call_next):
         if (origin or referer_origin) != PUBLIC_URL:
             return HTMLResponse("Origine de la requête refusée", status_code=403)
     response = await call_next(request)
-    response.headers["Referrer-Policy"] = "no-referrer"
+    # no-referrer makes browsers send Origin: null on native form POSTs,
+    # which our CSRF check correctly rejects. Preserve the origin, but never
+    # disclose paths or query strings (magic links / OAuth codes) in Referer.
+    response.headers["Referrer-Policy"] = "strict-origin"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     if not path.startswith("/static/"):
