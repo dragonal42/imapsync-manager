@@ -87,3 +87,18 @@ input:disabled{background:#e5e7eb;color:#6b7280;cursor:not-allowed}.oauth:disabl
     color: #6c757d !important;
     font-size: 12px;
 }
+
+
+.juicy-checkbox-custom {
+    animation: pulse 0s ease-out;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+.juicy-checkbox input[type="checkbox"]:checked + .juicy-checkbox-custom {
+    animation: pulse 0.3s ease-out;
+}
