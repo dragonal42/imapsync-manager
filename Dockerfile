@@ -2,7 +2,7 @@ FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Installation des dépendances Perl, Python, système et récupération d'imapsync
+# Installation des dÃ©pendances Perl, Python, systÃ¨me et rÃ©cupÃ©ration d'imapsync
 RUN apt-get update && apt-get install -y \
     perl \
     libauthen-ntlm-perl \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libdata-uniqid-perl \
     libdigest-hmac-perl \
     libdist-checkconflicts-perl \
+    libencode-imaputf7-perl \
     libfile-copy-recursive-perl \
     libfile-tail-perl \
     libio-compress-perl \
@@ -22,6 +23,8 @@ RUN apt-get update && apt-get install -y \
     libmodule-scandeps-perl \
     libnet-ssleay-perl \
     libproc-processtable-perl \
+    libreadonly-perl \
+    libregexp-common-perl \
     libsys-meminfo-perl \
     libterm-readkey-perl \
     libunicode-string-perl \
@@ -46,7 +49,10 @@ COPY msmtp.conf.template /app/msmtp.conf.template
 COPY templates /app/templates
 COPY static /app/static
 COPY imapsync /usr/bin/imapsync
-RUN chmod +x /usr/bin/imapsync
+# Fail the image build if a required Perl module is missing, before deployment.
+RUN chmod +x /usr/bin/imapsync \
+    && perl -c /usr/bin/imapsync \
+    && /usr/bin/imapsync --version
 COPY entrypoint.sh /app/entrypoint.sh
 COPY daily_mail.sh /app/daily_mail.sh
 RUN chmod +x /app/entrypoint.sh /app/daily_mail.sh
