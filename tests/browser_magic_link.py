@@ -123,6 +123,27 @@ def check():
             assert page.locator('.oauth[data-target="oauth2_token2"]').first.is_disabled()
             assert page.locator('#refresh_oauth2_token2').is_disabled()
 
+            # Source-only and AI controls: disabled destination must not block submission.
+            assert page.locator('#bActiverSynchro').is_checked()
+            assert not page.locator('#bPretraitementIA').is_checked()
+            assert page.locator('#ai-options').is_hidden()
+            page.locator('#bPretraitementIA').check()
+            assert page.locator('#ai-options').is_visible()
+            page.locator('[name="nPeriodeJours"]').fill('7')
+            page.locator('[name="sMoteurIA"]').select_option('Gemini')
+            page.locator('#bActiverSynchro').uncheck()
+            assert page.locator('[name="host2"]').is_disabled()
+            assert page.locator('#pass2').is_disabled()
+            assert page.locator('.oauth[data-target="oauth2_token2"]').first.is_disabled()
+            assert page.locator('#delete1').is_disabled()
+            page.locator('#bActiverSynchro').check()
+            assert page.locator('[name="host2"]').is_enabled()
+            page.locator('#bPretraitementIA').uncheck()
+            assert page.locator('[name="nPeriodeJours"]').is_disabled()
+            page.set_viewport_size({'width': 390, 'height': 844})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            page.set_viewport_size({'width': 1280, 'height': 900})
+
             # Dashboard controls, confirmation cancellation, filtering and manual UI.
             config = main.load_config()
             stamp = datetime.now(timezone.utc).isoformat()

@@ -91,6 +91,26 @@ L’image installe `procps` pour fournir `ps`, utilisé par imapsync, et `tzdata
 
 Les champs web `oauth2_token1/2` sont transmis au moteur sous ses options réelles `--oauthaccesstoken1/2`. Les anciens arguments `--oauth2_token1/2` ne sont pas reconnus par l’imapsync embarqué et provoquent le code 64. Le build teste désormais aussi les noms d’options OAuth avec `--version`, sans connexion IMAP. Les tests Python exercent le véritable analyseur d’arguments extrait du script lorsque Perl est disponible.
 
+## Vérification de source et prétraitement IA
+
+Dans **Administration**, enregistrer une clé Mistral et/ou Gemini. Un champ vide conserve la clé ; la case « Effacer » la retire. Ces secrets sont enregistrés côté serveur dans `data/config.json` (permissions 0600) et ne sont jamais affichés dans les formulaires. Protéger et sauvegarder le volume de données.
+
+Dans une configuration, **Activer la synchronisation** est coché par défaut, y compris pour les anciennes configurations. Décocher désactive entièrement la destination. Sans IA, cette tâche vérifie la connexion IMAP source et l’accès au dossier ; avec IA, elle effectue le tri sans lancer imapsync. La planification RUNNING/PAUSED reste applicable aux deux modes.
+
+**Prétraitement IA sur la source** est désactivé par défaut. Choisir Mistral/Gemini, une période de 1 à 365 jours (5 par défaut), et le dossier source (`INBOX` par défaut ; nom IMAP ASCII). Seuls les messages non lus, non supprimés, non encore traités et reçus durant cette période sont analysés. Le dossier choisi concerne la vérification IA ; imapsync conserve son comportement de synchronisation des dossiers.
+
+L’IA reçoit uniquement l’objet, une sélection bornée d’en-têtes et jusqu’à 30 URLs, jamais les pièces jointes ou le texte complet. Le corps est lu avec `BODY.PEEK[]`, sans marquer le message comme lu ; aucune URL n’est visitée. Les réponses sont validées strictement. Les messages légitimes ou incertains restent en place. Les messages spam/arnaque sont copiés dans le sous-dossier `_01-Arnaques`, puis supprimés de la source avec `UID EXPUNGE` ciblé. Le serveur doit supporter UIDPLUS : la date d’arrivée `INTERNALDATE` de la copie et son UID sont vérifiés avant de supprimer l’original. La quarantaine est exclue de l’étape imapsync lorsque le prétraitement est activé.
+
+Une erreur API/IMAP ou un message dépassant 2 Mio interrompt le traitement et empêche la synchronisation suivante pour cette exécution ; le journal indique la cause sans exposer les emails ni les clés. La limite porte sur le message complet, pièces jointes comprises. Une classification IA peut se tromper : les messages déplacés restent consultables et récupérables dans `_01-Arnaques`.
+
+Le suivi des UID et UIDVALIDITY persiste dans `data/ai_state.json`, indépendamment des journaux. Vider les logs ne relance pas l’analyse des messages déjà traités. Une copie interrompue ou dont la date ne peut être confirmée bloque la reprise automatique pour éviter les copies multiples et une suppression non vérifiée. Dans ce cas, mettre la tâche en PAUSED, attendre/arrêter son exécution, vérifier l’original et sa copie dans `_01-Arnaques`, puis faire corriger par l’administrateur uniquement l’entrée UID concernée dans `ai_state.json` (marquer `done` si le déplacement est confirmé, ou retirer l’entrée uniquement après avoir restauré l’original et retiré la copie ambiguë). Ne pas effacer tout le suivi sans cette vérification.
+
+Les modèles peuvent être remplacés dans `.env` avec `MISTRAL_MODEL` (défaut `mistral-small-latest`) et `GEMINI_MODEL` (défaut `gemini-2.5-flash`). Les appels utilisent les interfaces REST [Mistral Chat](https://docs.mistral.ai/api/endpoint/chat) et [Gemini Generate Content avec sortie structurée](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
+
+L’option de suppression après transfert transmet `--delete1` une seule fois. Les messages `Info: turning on --expunge1...` sont informatifs : aucun `--noexpunge1` n’est ajouté. Le code de retour du processus décide du résultat, affiché **OK** pour une réussite ; la page de journal et le tableau de bord actualisent le statut automatiquement. Un journal encore en cours de lecture des dossiers ne constitue pas une preuve de fin du processus.
+
+Après fusion, reconstruire l’image (`docker compose up -d --build imapsync-manager`). Les tests simulent les fournisseurs IA et IMAP, sans envoyer de données à un fournisseur ni déplacer de vrais messages.
+
 ## Remerciements
 
 Basé sur [imapsync de Gilles LAMIRAL](https://imapsync.lamiral.info/).

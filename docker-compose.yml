@@ -11,6 +11,8 @@ services:
     environment:
       - ADMIN_EMAIL=${ADMIN_EMAIL:?Définissez ADMIN_EMAIL dans .env}
       - PUBLIC_URL=${PUBLIC_URL:?Définissez PUBLIC_URL avec une origine HTTPS}
+      - MISTRAL_MODEL=${MISTRAL_MODEL:-mistral-small-latest}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
       - TZ=${TZ:-Europe/Paris}
       - SMTP_HOST=${SMTP_HOST}
