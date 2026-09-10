@@ -5,6 +5,19 @@
 <label>Authentification de la messagerie<select name="authmech{{ side }}" data-auth-side="{{ side }}"><option value="PLAIN">Mot de passe IMAP</option><option value="XOAUTH2" {% if account.get('authmech' ~ side) == 'XOAUTH2' %}selected{% endif %}>Connexion OAuth2</option></select></label>
 <label>Mot de passe IMAP<input type="password" id="pass{{ side }}" name="pass{{ side }}" autocomplete="new-password" {% if account.get('authmech' ~ side) == 'XOAUTH2' %}disabled{% endif %}></label><p class="muted">En modification, laissez les secrets vides pour conserver les valeurs enregistrées.</p>
 <div class="actions"><button type="button" class="oauth" data-provider="google" data-target="oauth2_token{{ side }}" {% if account.get('authmech' ~ side) != 'XOAUTH2' %}disabled{% endif %}>Connecter Google</button><button type="button" class="oauth" data-provider="microsoft" data-target="oauth2_token{{ side }}" {% if account.get('authmech' ~ side) != 'XOAUTH2' %}disabled{% endif %}>Connecter Microsoft</button></div>
-<p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p><input type="hidden" id="oauth2_token{{ side }}" name="oauth2_token{{ side }}"><input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}"></section>{% endfor %}</div>
+<p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p><input type="hidden" id="oauth2_token{{ side }}" name="oauth2_token{{ side }}"><input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}">
+<!-- Option --delete1 pour la SOURCE uniquement -->
+{% if side == '1' %}
+<div class="form-group delete-option">
+    <label class="checkbox-inline">
+        <input type="checkbox" id="delete1" name="delete1"
+               {% if account.get('delete1') == 'on' %}checked{% endif %}>
+        <strong>Supprimer les messages sur la source après synchronisation</strong>
+    </label>
+    <small class="muted">(Équivalent à <code>--delete1</code> dans imapsync)</small>
+</div>
+{% endif %}
+</section>
+{% endfor %}</div>
 <button class="save-button"><span class="save-icon" aria-hidden="true">✓</span> Enregistrer</button> <a href="/dashboard">Retour au tableau de bord</a></form>
 <script defer src="/static/auth.js"></script>{% endblock %}
