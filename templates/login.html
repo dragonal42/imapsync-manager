@@ -1,0 +1,5 @@
+{% extends 'base.html' %}{% block content %}<section class="narrow"><h1>Connexion à votre espace</h1>
+<p>Aucun mot de passe. Saisissez l’adresse email enregistrée par votre administrateur.</p>
+{% if sent %}<p class="notice" role="status">Si cette adresse est enregistrée, un lien de connexion vous sera envoyé. Il expire dans 15 minutes. Pensez à vérifier vos courriers indésirables.</p>{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form action="/login" method="post"><label>Email<input name="email" type="email" autocomplete="email" maxlength="254" required></label><button>Recevoir mon lien de connexion</button></form></section>{% endblock %}

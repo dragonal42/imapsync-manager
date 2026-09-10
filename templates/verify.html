@@ -1,0 +1,2 @@
+{% extends 'base.html' %}{% block content %}<section class="narrow"><h1>Ouvrir mon espace</h1><p>Confirmez votre connexion à IMAPSync Manager. Ce lien ne pourra plus être utilisé après confirmation.</p>
+<form method="post" action="/auth/verify"><input type="hidden" name="token" value="{{ token }}"><button>Confirmer ma connexion</button></form></section>{% endblock %}
