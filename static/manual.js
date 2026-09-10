@@ -49,9 +49,4 @@ stopButton.addEventListener('click', async () => {
         await apiPost('/cgi-bin/imapsync', body); showToast('Arrêt demandé', 'info');
     } catch (error) { stopButton.disabled = false; await Swal.fire({title: 'Arrêt impossible', text: error.message, icon: 'error'}); }
 });
-document.querySelectorAll('.oauth').forEach(button => button.addEventListener('click', () => {
-    const side = button.dataset.target.slice(-1);
-    document.getElementById('authmech' + side).value = 'XOAUTH2';
-    window.open('/oauth/login/' + button.dataset.provider + '?target_field=' + button.dataset.target, 'OAuth', 'width=550,height=700');
-}));
 if (runId) { runButton.disabled = true; pollManual(); }

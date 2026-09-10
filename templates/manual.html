@@ -3,11 +3,11 @@
 <div class="grid">{% for side, title in [('1','Source'),('2','Destination')] %}<section><h2>{{ title }}</h2>
 <label>Serveur IMAP {{ title|lower }}<input name="host{{ side }}" id="host{{ side }}" required maxlength="255"></label>
 <label>Identifiant {{ title|lower }}<input name="user{{ side }}" id="user{{ side }}" required maxlength="255"></label>
-<label>Authentification<select name="authmech{{ side }}" id="authmech{{ side }}"><option value="PLAIN">Mot de passe IMAP</option><option value="XOAUTH2">OAuth2</option></select></label>
+<label>Authentification<select name="authmech{{ side }}" id="authmech{{ side }}" data-auth-side="{{ side }}"><option value="PLAIN">Mot de passe IMAP</option><option value="XOAUTH2">Connexion OAuth2</option></select></label>
 <label>Mot de passe {{ title|lower }}<input name="password{{ side }}" id="password{{ side }}" type="password" autocomplete="new-password"></label>
-<div class="actions"><button type="button" class="oauth" data-provider="google" data-target="oauth2_token{{ side }}">Connecter Google</button><button type="button" class="oauth" data-provider="microsoft" data-target="oauth2_token{{ side }}">Connecter Microsoft</button></div>
-<label>Jeton OAuth2 {{ title|lower }}<input type="password" name="oauth2_token{{ side }}" id="oauth2_token{{ side }}" autocomplete="off"></label>
-<input type="hidden" id="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" role="status"></p>
+<div class="actions"><button type="button" class="oauth" data-provider="google" data-target="oauth2_token{{ side }}" disabled>Connecter Google</button><button type="button" class="oauth" data-provider="microsoft" data-target="oauth2_token{{ side }}" disabled>Connecter Microsoft</button></div>
+<label>Jeton OAuth2 {{ title|lower }}<input type="password" name="oauth2_token{{ side }}" id="oauth2_token{{ side }}" autocomplete="off" disabled></label>
+<input type="hidden" id="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p>
 <label>Sous-dossier {{ title|lower }} (facultatif)<input name="subfolder{{ side }}" maxlength="255"></label></section>{% endfor %}</div>
 <section><h2>Options</h2><div class="grid">
 <label class="check"><input type="checkbox" name="dry"> Simulation sans modification</label>
@@ -18,4 +18,4 @@
 <label class="check"><input type="checkbox" name="delete2"> Supprimer les messages destination absents de la source</label>
 </div><div class="actions"><button id="bt-sync" type="submit">Lancer la synchronisation</button><button id="bt-abort" type="button" class="danger" disabled>Arrêter</button></div></section></form>
 <section><h2>Suivi d’exécution</h2><p id="manual-status" role="status">Aucune exécution en cours.</p><pre id="output" aria-live="off"></pre><a id="manual-log" hidden>Ouvrir le journal</a></section>
-<script defer src="/static/manual.js"></script>{% endblock %}
+<script defer src="/static/auth.js"></script><script defer src="/static/manual.js"></script>{% endblock %}
