@@ -40,7 +40,7 @@ def client(email=None):
 
 
 def form(**changes):
-    return {"label": "New", "host1": "imap.example.com", "host2": "imap.example.com", "user1": "a", "user2": "b", **changes}
+    return {"label": "New", "host1": "imap.example.com", "host2": "imap.example.com", "user1": "a", "user2": "b", "pass1": "test-password", "pass2": "test-password", **changes}
 
 
 def test_public_and_private_routes(env):
@@ -82,7 +82,7 @@ def test_create_edit_ownership(env):
     alice = client("alice@example.com")
     assert alice.post("/account/add", data=form(owner="bob@example.com")).status_code == 303
     assert main.load_config()["accounts"][-1]["owner"] == "alice@example.com"
-    assert alice.post("/account/edit/a", data=form(owner="bob@example.com")).status_code == 303
+    assert alice.post("/account/edit/a", data=form(owner="bob@example.com", pass1="", pass2="")).status_code == 303
     account = main.load_config()["accounts"][0]
     assert account["owner"] == "alice@example.com"
     assert account["pass1"] == "secret"
@@ -92,7 +92,7 @@ def test_create_edit_ownership(env):
 
 def test_admin_filter_and_users(env):
     admin = client("admin@example.com")
-    response = admin.get("/admin?owner=bob@example.com")
+    response = admin.get("/dashboard?owner=bob@example.com")
     assert "BOB_PRIVATE" in response.text and "ALICE_PRIVATE" not in response.text
     assert admin.post("/admin/users", data={"email": "CHARLIE@example.com", "pseudo": "Charlie", "role": "admin"}).status_code == 303
     assert main.load_config()["users"][-1] == {"email": "charlie@example.com", "pseudo": "Charlie", "role": "user"}
@@ -220,7 +220,7 @@ def test_stop_only_selected_account(env):
     assert client("alice@example.com").post("/account/stop/a").status_code == 303
     assert main.processes["a"]["cancelled"]
     assert not main.processes["b"]["cancelled"]
-    assert client("alice@example.com").post("/cgi-bin/imapsync", data={"extra": "--any-option", "abort": "on"}).status_code == 410
+    assert client("alice@example.com").post("/cgi-bin/imapsync", data={"extra": "--any-option"}).status_code == 400
 
 
 def test_expired_session_and_restart_persistence(env):
