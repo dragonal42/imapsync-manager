@@ -427,6 +427,10 @@ async def save_account(request: Request, account_id: str = ""):
         if not value or len(value) > 255 or value.startswith("-") or any(ord(c) < 32 for c in value):
             raise HTTPException(400, "Champ invalide : " + key)
         account[key] = value
+    
+    # Gérer les options de suppression
+    account["delete1"] = str(form.get("delete1", "off"))
+    account["delete2"] = "off"  # Désactivé par défaut pour la destination
     for side in ("1", "2"):
         mech = str(form.get("authmech" + side, "PLAIN"))
         if mech not in {"PLAIN", "XOAUTH2"}:
