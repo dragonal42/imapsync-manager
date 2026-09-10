@@ -3,15 +3,87 @@
 button:disabled{opacity:.5;cursor:not-allowed}#manual-form section > .actions{margin-top:20px}
 input:disabled{background:#e5e7eb;color:#6b7280;cursor:not-allowed}.oauth:disabled{background:#d1d5db;color:#6b7280;opacity:1}.oauth-status{font-weight:750}.oauth-success{color:#15803d}.oauth-error{color:#b91c1c}.oauth-pending{color:#52667a}.save-button{background:#fff;color:#182e43;border:2px solid #15803d}.save-icon{color:#15803d;font-weight:800;font-size:1.2em;margin-right:6px}
 
-.delete-option {
-    margin-top: 12px;
-    padding: 8px;
-    background: #f8f9fa;
-    border-radius: 6px;
-    border-left: 3px solid #ffc107;
+/* ===== JUICY CHECKBOX FOR DELETE1 ===== */
+.delete-option-juicy {
+    margin: 16px 0;
+    padding: 12px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 10px;
+    border-left: 4px solid #ffc107;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transition: all 0.3s ease;
 }
 
-.delete-option .checkbox-inline {
-    font-weight: 500;
-    color: #52667a;
+.delete-option-juicy:hover {
+    background: linear-gradient(135deg, #f0f1f5 0%, #dfe0e4 100%);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.juicy-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    font-size: 15px;
+    user-select: none;
+}
+
+.juicy-checkbox input[type="checkbox"] {
+    display: none; /* On cache l'input natif */
+}
+
+.juicy-checkbox-custom {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    border: 2px solid #ffc107;
+    border-radius: 8px;
+    background: white;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    box-shadow: 0 2px 4px rgba(255, 193, 7, 0.2);
+}
+
+.juicy-checkbox-custom:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 8px rgba(255, 193, 7, 0.3);
+}
+
+.juicy-checkbox input[type="checkbox"]:checked + .juicy-checkbox-custom {
+    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+    border-color: #ff9800;
+    box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.2);
+}
+
+.juicy-checkbox-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    transition: transform 0.2s ease;
+    opacity: 0;
+}
+
+.juicy-checkbox input[type="checkbox"]:checked + .juicy-checkbox-custom .juicy-checkbox-icon {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+}
+
+.juicy-checkbox-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.juicy-checkbox-text strong {
+    color: #182e43;
+    font-size: 15px;
+    letter-spacing: 0.2px;
+}
+
+.juicy-checkbox-text small {
+    color: #6c757d !important;
+    font-size: 12px;
 }
