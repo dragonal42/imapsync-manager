@@ -106,6 +106,22 @@ def test_csrf(env):
     assert alice.post("/account/delete/a").status_code == 403
 
 
+def test_form_referrer_policy_and_origin_fallback(env):
+    browser = client()
+    for path in ["/login", "/auth/verify?token=private"]:
+        assert browser.get(path).headers["referrer-policy"] == "strict-origin"
+    del browser.headers["Origin"]
+    assert browser.post("/login", data={"email": "unknown@example.com"},
+                        headers={"Referer": "https://testserver/"}).status_code == 200
+    for headers in [
+        {"Origin": "null", "Referer": "https://testserver/"},
+        {"Origin": "https://evil.example", "Referer": "https://testserver/"},
+        {"Referer": "https://evil.example/"},
+        {},
+    ]:
+        assert browser.post("/login", data={"email": "unknown@example.com"}, headers=headers).status_code == 403
+
+
 def test_magic_link_lifecycle(env, monkeypatch):
     deliveries = []
     async def deliver(email, token):
