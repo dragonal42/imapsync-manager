@@ -666,7 +666,7 @@ async def execute(account, actor):
     private_values = [str(account.get(prefix + side, "")) for prefix in ("pass", "refresh", "token") for side in ("1", "2")]
     execution_dir = tempfile.TemporaryDirectory(prefix="imapsync-")
     try:
-        cmd = ["imapsync", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
+        cmd = ["imapsync", "--delete1", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
                "--pidfile", str(Path(execution_dir.name) / "imapsync.pid")]
         cmd += account.get("options", [])
         for side in ("1", "2"):
