@@ -5,6 +5,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Installation des dÃ©pendances Perl, Python, systÃ¨me et rÃ©cupÃ©ration d'imapsync
 RUN apt-get update && apt-get install -y \
     perl \
+    procps \
+    tzdata \
     libauthen-ntlm-perl \
     libclass-load-perl \
     libcrypt-ssleay-perl \
@@ -51,6 +53,7 @@ COPY static /app/static
 COPY imapsync /usr/bin/imapsync
 # Fail the image build if a required Perl module is missing, before deployment.
 RUN chmod +x /usr/bin/imapsync \
+    && ps -p 1 -o pid= \
     && perl -c /usr/bin/imapsync \
     && /usr/bin/imapsync --version
 COPY entrypoint.sh /app/entrypoint.sh
