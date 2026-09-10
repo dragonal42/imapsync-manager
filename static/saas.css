@@ -102,3 +102,7 @@ input:disabled{background:#e5e7eb;color:#6b7280;cursor:not-allowed}.oauth:disabl
 .juicy-checkbox input[type="checkbox"]:checked + .juicy-checkbox-custom {
     animation: pulse 0.3s ease-out;
 }
+
+fieldset {min-width:0; margin:0; padding:1.25rem; border:1px solid #d8dee9; border-radius:12px; background:white} fieldset legend {font-size:1.3rem; font-weight:bold} fieldset:disabled {opacity:.45} .sync-toggle {grid-column:1 / -1} #side1, #side2 {grid-column:1 / -1} [hidden] {display:none !important}
+
+.check-label {display:flex; align-items:center; gap:.65rem} .check-label input[type="checkbox"] {display:inline-block; width:1.1rem; height:1.1rem; margin:0; flex:none} form > .save-button {margin-top:1rem}

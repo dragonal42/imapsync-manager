@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import requests
+from ai_preprocessing import preprocess, PreprocessingError
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -350,9 +351,18 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
     if request.state.user["role"] != "admin":
         config["users"] = []
     config["oauth_apps"] = {}
+    config.pop("sApiKeyMistral", None)
+    config.pop("sApiKeyGemini", None)
     config["report_email"] = ""
     return render(request, "dashboard.html", config=config, owner=owner, stats=stats,
                   date_from=start.isoformat(), date_to=end.isoformat(), timezone_name=str(local_zone()))
+
+
+@app.get("/api/task-status")
+async def task_status(request: Request):
+    config = load_config()
+    return {"accounts": [{"id": str(a["id"]), "status": a.get("status", ""), "last_run": display_time(a.get("last_run", ""))}
+                         for a in config["accounts"] if visible(request.state.user, a)]}
 
 
 @app.get("/admin")
@@ -376,13 +386,23 @@ async def create_user(request: Request):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.post("/ai/settings")
 @app.post("/settings")
 @app.post("/oauth/settings")
 async def settings(request: Request):
     require_admin(request)
     form = await request.form()
     config = load_config()
-    if request.url.path == "/settings":
+    if request.url.path == "/ai/settings":
+        for key in ("sApiKeyMistral", "sApiKeyGemini"):
+            value = str(form.get(key, "")).strip()
+            if len(value) > 4096 or any(ord(c) < 32 for c in value):
+                raise HTTPException(400, "Clé API invalide")
+            if form.get("clear_" + key):
+                config.pop(key, None)
+            elif value:
+                config[key] = value
+    elif request.url.path == "/settings":
         try:
             interval = int(form.get("poll_interval", 5))
             if not 1 <= interval <= 10080:
@@ -422,7 +442,25 @@ async def save_account(request: Request, account_id: str = ""):
     if schedule_state not in {"RUNNING", "PAUSED"}:
         raise HTTPException(400, "État de planification invalide")
     account["schedule_state"] = schedule_state
-    for key in ("label", "host1", "host2", "user1", "user2"):
+    # A hidden marker distinguishes the new unchecked checkbox from legacy clients.
+    sync = form.get("bActiverSynchro") == "on" if form.get("task_options") else account.get("bActiverSynchro", True)
+    ai = form.get("bPretraitementIA") == "on"
+    try:
+        days = int(form.get("nPeriodeJours", 5))
+        if not 1 <= days <= 365:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Période IA invalide (1 à 365 jours)")
+    engine = str(form.get("sMoteurIA", "Mistral"))
+    if engine not in {"Mistral", "Gemini"}:
+        raise HTTPException(400, "Moteur IA invalide")
+    if ai and not config.get("sApiKey" + engine):
+        raise HTTPException(400, "Clé API IA absente : contactez l’administrateur")
+    folder = str(form.get("source_folder", account.get("source_folder", "INBOX"))).strip()
+    if not folder or len(folder) > 255 or any(ord(c) < 32 or ord(c) > 126 or c in '\\"*%' for c in folder) or "_01-Arnaques" in folder:
+        raise HTTPException(400, "Dossier source invalide (nom IMAP ASCII, hors quarantaine)")
+    account.update(bActiverSynchro=sync, bPretraitementIA=ai, nPeriodeJours=days, sMoteurIA=engine, source_folder=folder)
+    for key in (("label", "host1", "user1", "host2", "user2") if sync else ("label", "host1", "user1")):
         value = str(form.get(key, "")).strip()
         if not value or len(value) > 255 or value.startswith("-") or any(ord(c) < 32 for c in value):
             raise HTTPException(400, "Champ invalide : " + key)
@@ -431,7 +469,7 @@ async def save_account(request: Request, account_id: str = ""):
     # Gérer les options de suppression
     account["delete1"] = str(form.get("delete1", "off"))
     account["delete2"] = "off"  # Désactivé par défaut pour la destination
-    for side in ("1", "2"):
+    for side in (("1", "2") if sync else ("1",)):
         mech = str(form.get("authmech" + side, "PLAIN"))
         if mech not in {"PLAIN", "XOAUTH2"}:
             raise HTTPException(400, "Authentification IMAP invalide")
@@ -652,6 +690,25 @@ async def oauth_callback(request: Request, state: str = "", code: str = "", erro
     return oauth_result(request, item["target"], item["provider"], tokens=tokens)
 
 
+async def refresh_access_token(account, side, private_values):
+    provider = account["provider" + side]
+    response = await asyncio.to_thread(requests.post, OAUTH_CONFIG[provider]["token_url"],
+        data={**oauth_credentials(provider), "refresh_token": account["refresh" + side], "grant_type": "refresh_token"}, timeout=20)
+    response.raise_for_status()
+    tokens = response.json()
+    token = tokens["access_token"]
+    private_values.append(token)
+    if tokens.get("refresh_token"):
+        account["refresh" + side] = tokens["refresh_token"]
+        private_values.append(tokens["refresh_token"])
+        fresh = load_config()
+        for current in fresh["accounts"]:
+            if str(current["id"]) == str(account["id"]):
+                current["refresh" + side] = tokens["refresh_token"]
+        save_config(fresh)
+    return token
+
+
 async def execute(account, actor):
     account_id = str(account["id"])
     active = processes[account_id]
@@ -673,35 +730,55 @@ async def execute(account, actor):
         cmd = ["imapsync", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
                "--pidfile", str(Path(execution_dir.name) / "imapsync.pid")]
         cmd += account.get("options", [])
-        for side in ("1", "2"):
-            # Ajouter les options de suppression
-            if account.get("delete1") == "on":
-                cmd.append("--delete1")
-            if account.get("delete2") == "on":
-                cmd.append("--delete2")
+        sync = account.get("bActiverSynchro", True)
+        if sync and account.get("delete1") == "on" and "--delete1" not in cmd:
+            cmd.append("--delete1")
+        if sync and account.get("delete2") == "on" and "--delete2" not in cmd:
+            cmd.append("--delete2")
+        auth_started = time.monotonic()
+        source_token = account.get("token1", "")
+        for side in (("1", "2") if sync else ("1",)):
             cmd += ["--host" + side, account["host" + side], "--user" + side, account["user" + side]]
             if account.get("authmech" + side) == "XOAUTH2":
                 if account.get("token" + side):
                     cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, account["token" + side]]
                     continue
-                provider = account["provider" + side]
-                response = await asyncio.to_thread(requests.post, OAUTH_CONFIG[provider]["token_url"],
-                    data={**oauth_credentials(provider), "refresh_token": account["refresh" + side], "grant_type": "refresh_token"}, timeout=20)
-                response.raise_for_status()
-                tokens = response.json()
-                token = tokens["access_token"]
-                private_values.append(token)
-                if tokens.get("refresh_token"):
-                    fresh = load_config()
-                    for current in fresh["accounts"]:
-                        if str(current["id"]) == account_id:
-                            current["refresh" + side] = tokens["refresh_token"]
-                    save_config(fresh)
+                token = await refresh_access_token(account, side, private_values)
+                if side == "1":
+                    source_token = token
                 cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, token]
             else:
                 cmd += ["--password" + side, account.get("pass" + side, "")]
+        if account.get("bPretraitementIA") or not sync:
+            state_file = CONFIG_FILE.with_name("ai_state.json")
+            def read_state(identity):
+                return read_json(state_file, {}).get(identity, {})
+            def save_state(identity, state):
+                data = read_json(state_file, {})
+                data[identity] = state
+                write_json(state_file, data)
+            def progress(message):
+                output.extend((message + "\n").encode())
+                del output[:-65536]
+                run["log"] = clean_log(output, private_values)
+                latest = load_config()
+                for current in latest["runs"]:
+                    if current["id"] == run["id"]:
+                        current["log"] = run["log"]
+                save_config(latest)
+            await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
+                             active, read_state, save_state, progress)
+            if sync and account.get("bPretraitementIA"):
+                cmd += ["--exclude", "_01-Arnaques"]
+                # A long preprocessing phase must not launch imapsync with expired credentials.
+                if time.monotonic() - auth_started >= 60 and not active["cancelled"]:
+                    for side in ("1", "2"):
+                        if account.get("authmech" + side) == "XOAUTH2":
+                            cmd[cmd.index("--oauthaccesstoken" + side) + 1] = await refresh_access_token(account, side, private_values)
         if active["cancelled"]:
             status = "Annulée"
+        elif not sync:
+            status = "Succès"
         else:
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             active["process"] = process
@@ -735,6 +812,9 @@ async def execute(account, actor):
                 process.kill()
                 await process.wait()
         raise
+    except PreprocessingError as error:
+        status = "Annulée" if active["cancelled"] else "Erreur"
+        run["log"] = clean_log(output, private_values) + "\n" + str(error)
     except Exception:
         run["log"] = "Échec de connexion, d'authentification ou de lancement. Vérifiez les paramètres IMAP/OAuth."
     finally:
