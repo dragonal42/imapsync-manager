@@ -674,6 +674,11 @@ async def execute(account, actor):
                "--pidfile", str(Path(execution_dir.name) / "imapsync.pid")]
         cmd += account.get("options", [])
         for side in ("1", "2"):
+            # Ajouter les options de suppression
+            if account.get("delete1") == "on":
+                cmd.append("--delete1")
+            if account.get("delete2") == "on":
+                cmd.append("--delete2")
             cmd += ["--host" + side, account["host" + side], "--user" + side, account["user" + side]]
             if account.get("authmech" + side) == "XOAUTH2":
                 if account.get("token" + side):
