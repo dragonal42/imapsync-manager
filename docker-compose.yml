@@ -9,6 +9,9 @@ services:
       - "${PORTSYNC:-8081}:8080"
 
     environment:
+      - ADMIN_EMAIL=${ADMIN_EMAIL:?Définissez ADMIN_EMAIL dans .env}
+      - PUBLIC_URL=${PUBLIC_URL:?Définissez PUBLIC_URL avec une origine HTTPS}
+      - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
       - TZ=${TZ:-Europe/Paris}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -25,8 +28,6 @@ services:
     labels:
       - "caddy=${CADDY_URL}"
       - "caddy.reverse_proxy={{upstreams 8080}}"
-      - "caddy.basic_auth=/*"
-      - "caddy.basic_auth.${CADDY_USER}=${CADDY_AUTH_HASH}"
 
 networks:
   proxy-net:

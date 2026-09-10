@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}IMAPSync Manager{% endblock %}</title>
+<link rel="icon" type="image/png" href="/static/Logo_ImapSyncManager_32p.png">
+<link rel="stylesheet" href="/static/saas.css"></head>
+<body><header><a class="brand" href="/"><img src="/static/Logo_ImapSyncManager_32p.png" alt="">IMAPSync Manager</a><nav>
+{% if user %}<a href="/dashboard">Mes synchronisations</a>{% if user.role == 'admin' %}<a href="/admin">Administration</a>{% endif %}
+<span>{{ user.pseudo }}</span><form action="/logout" method="post"><button>Déconnexion</button></form>
+{% else %}<a href="/login">Se connecter</a>{% endif %}</nav></header>
+<main>{% block content %}{% endblock %}</main>
+<footer><span>IMAPSync Manager</span><a href="/cgu">Conditions d’utilisation</a><a href="/privacy">Confidentialité</a></footer>
+</body></html>
