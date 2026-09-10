@@ -8,13 +8,19 @@
 <p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p><input type="hidden" id="oauth2_token{{ side }}" name="oauth2_token{{ side }}"><input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}">
 <!-- Option --delete1 pour la SOURCE uniquement -->
 {% if side == '1' %}
-<div class="form-group delete-option">
-    <label class="checkbox-inline">
+<div class="form-group delete-option-juicy">
+    <label class="juicy-checkbox">
         <input type="checkbox" id="delete1" name="delete1"
                {% if account.get('delete1') == 'on' %}checked{% endif %}>
-        <strong>Supprimer les messages sur la source après synchronisation</strong>
+        <span class="juicy-checkbox-custom">
+            <span class="juicy-checkbox-inner"></span>
+            <span class="juicy-checkbox-icon">✓</span>
+        </span>
+        <span class="juicy-checkbox-text">
+            <strong>Supprimer les messages sur la source après synchronisation</strong>
+            <small class="muted">(Équivalent à <code>--delete1</code> dans imapsync)</small>
+        </span>
     </label>
-    <small class="muted">(Équivalent à <code>--delete1</code> dans imapsync)</small>
 </div>
 {% endif %}
 </section>
