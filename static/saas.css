@@ -2,3 +2,16 @@
 .metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}.metrics strong{display:block;font-size:2.5rem}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:20px}.section-heading h2{margin:0}.schedule-running{color:#15803d}.schedule-paused{color:#6b7280}.orange{background:#c05205;color:white}.filters{display:flex;gap:16px;align-items:end;flex-wrap:wrap;margin-bottom:24px}.filters label{flex:1;min-width:180px}.filters input,.filters select{margin-bottom:0}.check{display:flex;align-items:center;gap:10px}.check input{width:auto;margin:0}.swal2-container input{width:auto}.swal2-container button{font:inherit}@media(max-width:800px){.metrics{grid-template-columns:1fr}.section-heading{align-items:flex-start;flex-direction:column}}
 button:disabled{opacity:.5;cursor:not-allowed}#manual-form section > .actions{margin-top:20px}
 input:disabled{background:#e5e7eb;color:#6b7280;cursor:not-allowed}.oauth:disabled{background:#d1d5db;color:#6b7280;opacity:1}.oauth-status{font-weight:750}.oauth-success{color:#15803d}.oauth-error{color:#b91c1c}.oauth-pending{color:#52667a}.save-button{background:#fff;color:#182e43;border:2px solid #15803d}.save-icon{color:#15803d;font-weight:800;font-size:1.2em;margin-right:6px}
+
+.delete-option {
+    margin-top: 12px;
+    padding: 8px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 3px solid #ffc107;
+}
+
+.delete-option .checkbox-inline {
+    font-weight: 500;
+    color: #52667a;
+}
