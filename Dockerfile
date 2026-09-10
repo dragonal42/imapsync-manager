@@ -55,7 +55,9 @@ COPY imapsync /usr/bin/imapsync
 RUN chmod +x /usr/bin/imapsync \
     && ps -p 1 -o pid= \
     && perl -c /usr/bin/imapsync \
-    && /usr/bin/imapsync --version
+    && /usr/bin/imapsync --version \
+        --authmech1 XOAUTH2 --oauthaccesstoken1 build-check \
+        --authmech2 XOAUTH2 --oauthaccesstoken2 build-check
 COPY entrypoint.sh /app/entrypoint.sh
 COPY daily_mail.sh /app/daily_mail.sh
 RUN chmod +x /app/entrypoint.sh /app/daily_mail.sh

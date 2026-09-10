@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 import tempfile
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 from playwright.sync_api import sync_playwright
@@ -43,6 +44,11 @@ def check():
             response = client.request(request.method, request.url,
                                       headers=request.all_headers(), content=request.post_data_buffer,
                                       follow_redirects=not request.is_navigation_request())
+            if '/oauth/login/' in request.url and response.status_code == 307:
+                # Simulate provider consent, while exercising our actual callback
+                # and popup-to-opener message. Never navigate to a real provider.
+                state = parse_qs(urlsplit(response.headers['location']).query)['state'][0]
+                response = client.get('/oauth/callback', params={'state': state, 'code': 'test-code'}, headers=request.all_headers())
             headers = dict(response.headers)
             if policy:
                 headers["referrer-policy"] = policy
@@ -86,6 +92,36 @@ def check():
             assert "Créer un utilisateur" in page.content()
             cookie = next(c for c in context.cookies() if c["name"] == main.COOKIE)
             assert cookie["secure"] and cookie["httpOnly"]
+
+            page.goto(main.PUBLIC_URL + '/account/new')
+            for side in ['1', '2']:
+                assert page.locator('#pass' + side).is_enabled()
+                assert page.locator('.oauth[data-target="oauth2_token' + side + '"]').first.is_disabled()
+            page.locator('[name="authmech2"]').select_option('XOAUTH2')
+            assert page.locator('#pass2').is_disabled() and page.locator('#pass1').is_enabled()
+            assert page.locator('.oauth[data-target="oauth2_token2"]').first.is_enabled()
+            page.locator('.oauth[data-target="oauth2_token2"]').first.click()
+            page.wait_for_function("document.getElementById('status_oauth2_token2').classList.contains('oauth-error')")
+            assert page.locator('#status_oauth2_token2').evaluate('el => getComputedStyle(el).color') == 'rgb(185, 28, 28)'
+            config = main.load_config()
+            config['oauth_apps'] = {'google_client_id': 'test-client', 'google_client_secret': 'test-secret'}
+            main.save_config(config)
+            reply = MagicMock()
+            reply.json.return_value = {'access_token': 'test-access', 'refresh_token': 'test-refresh'}
+            main.requests.post = MagicMock(return_value=reply)
+            page.locator('.oauth[data-target="oauth2_token2"]').first.click()
+            page.wait_for_function("document.getElementById('status_oauth2_token2').classList.contains('oauth-success')")
+            status = page.locator('#status_oauth2_token2')
+            assert 'Connexion réussie.' in status.inner_text() and 'enregistrer' in status.inner_text()
+            assert status.evaluate('el => getComputedStyle(el).color') == 'rgb(21, 128, 61)'
+            assert int(status.evaluate('el => getComputedStyle(el).fontWeight')) >= 700
+            assert page.locator('#refresh_oauth2_token2').input_value() == 'test-refresh'
+            assert page.locator('.save-button').evaluate('el => getComputedStyle(el).borderTopColor') == 'rgb(21, 128, 61)'
+            assert page.locator('.save-icon').inner_text() == '✓'
+            page.locator('[name="authmech2"]').select_option('PLAIN')
+            assert page.locator('#pass2').is_enabled()
+            assert page.locator('.oauth[data-target="oauth2_token2"]').first.is_disabled()
+            assert page.locator('#refresh_oauth2_token2').is_disabled()
 
             # Dashboard controls, confirmation cancellation, filtering and manual UI.
             config = main.load_config()

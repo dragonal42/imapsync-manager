@@ -597,13 +597,19 @@ def oauth_credentials(provider):
     return {"client_id": config.get(prefix + "_client_id", ""), "client_secret": config.get(prefix + "_client_secret", "")}
 
 
+def oauth_result(request, target="", provider="", tokens=None, error="", status_code=200):
+    response = render(request, "oauth.html", target=target, provider=provider, tokens=tokens or {}, error=error)
+    response.status_code = status_code
+    return response
+
+
 @app.get("/oauth/login/{provider}")
 async def oauth_login(request: Request, provider: str, target_field: str):
     if provider not in OAUTH_CONFIG or target_field not in {"oauth2_token1", "oauth2_token2"}:
         raise HTTPException(400, "Paramètres OAuth invalides")
     credentials = oauth_credentials(provider)
     if not credentials["client_id"]:
-        raise HTTPException(400, "Le fournisseur OAuth n'est pas configuré")
+        return oauth_result(request, target_field, provider, error="Le fournisseur OAuth n'est pas configuré. Contactez l’administrateur.", status_code=400)
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(48)
     import base64
@@ -624,11 +630,11 @@ async def oauth_callback(request: Request, state: str = "", code: str = "", erro
     auth = auth_data()
     item = auth["oauth"].get(digest(state))
     if not item or item["session"] != digest(request.cookies[COOKIE]):
-        raise HTTPException(400, "Session OAuth invalide ou expirée")
+        return oauth_result(request, error="Session OAuth invalide ou expirée. Recommencez la connexion.", status_code=400)
     del auth["oauth"][digest(state)]
     write_json(AUTH_FILE, auth)
     if error or not code:
-        raise HTTPException(400, "Autorisation OAuth non accordée")
+        return oauth_result(request, item["target"], item["provider"], error="Autorisation OAuth non accordée. Recommencez la connexion.", status_code=400)
     data = {**oauth_credentials(item["provider"]), "code": code, "grant_type": "authorization_code",
             "redirect_uri": PUBLIC_URL + "/oauth/callback", "code_verifier": item["verifier"]}
     try:
@@ -638,8 +644,8 @@ async def oauth_callback(request: Request, state: str = "", code: str = "", erro
         if not tokens.get("access_token") or not tokens.get("refresh_token"):
             raise ValueError("Missing tokens")
     except (requests.RequestException, ValueError):
-        raise HTTPException(502, "Impossible d'obtenir les jetons OAuth")
-    return render(request, "oauth.html", target=item["target"], provider=item["provider"], tokens=tokens)
+        return oauth_result(request, item["target"], item["provider"], error="Impossible d’obtenir les jetons OAuth. Recommencez la connexion avant d’enregistrer.", status_code=502)
+    return oauth_result(request, item["target"], item["provider"], tokens=tokens)
 
 
 async def execute(account, actor):
@@ -667,7 +673,7 @@ async def execute(account, actor):
             cmd += ["--host" + side, account["host" + side], "--user" + side, account["user" + side]]
             if account.get("authmech" + side) == "XOAUTH2":
                 if account.get("token" + side):
-                    cmd += ["--authmech" + side, "XOAUTH2", "--oauth2_token" + side, account["token" + side]]
+                    cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, account["token" + side]]
                     continue
                 provider = account["provider" + side]
                 response = await asyncio.to_thread(requests.post, OAUTH_CONFIG[provider]["token_url"],
@@ -682,7 +688,7 @@ async def execute(account, actor):
                         if str(current["id"]) == account_id:
                             current["refresh" + side] = tokens["refresh_token"]
                     save_config(fresh)
-                cmd += ["--authmech" + side, "XOAUTH2", "--oauth2_token" + side, token]
+                cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, token]
             else:
                 cmd += ["--password" + side, account.get("pass" + side, "")]
         if active["cancelled"]:
@@ -750,7 +756,7 @@ def clean_log(output, private_values, truncated=False, complete=True):
     lines = []
     for line in text.splitlines():
         sensitive = re.search(r"command line|auth.*plain|password|oauth|token", line, re.I)
-        diagnostic = re.search(r"\b(error|missing|required|failed|failure|invalid|cannot|can't)\b", line, re.I)
+        diagnostic = re.search(r"\b(error|missing|required|failed|failure|invalid|cannot|can't|unknown|unrecognized|mandatory|supplementary)\b", line, re.I)
         if not sensitive or diagnostic:
             lines.append(line)
     return "\n".join(lines)

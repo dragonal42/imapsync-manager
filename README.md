@@ -14,6 +14,7 @@ Interface Docker / FastAPI pour synchroniser des boîtes IMAP, avec espaces util
 - Journaux filtrés par dates, aujourd’hui et les quatre jours précédents par défaut. Affichage à la seconde dans le fuseau `TZ` (Europe/Paris par défaut). Le filtre et les erreurs du jour utilisent la date de fin, ou de début pour une exécution en cours. Les compteurs ne sont pas limités par le filtre historique.
 - Suppression d’un journal par ligne et vidage des journaux d’une configuration, avec confirmation. Les journaux en cours ne peuvent pas être supprimés. Les anciens journaux restent associés à leur propriétaire historique, même après réattribution de la configuration.
 - Comptes Google et Microsoft via OAuth avec état aléatoire associé à la session et PKCE. Renouvellement des jetons avant exécution.
+- Le choix d’authentification active uniquement les champs utiles : mot de passe IMAP actif et boutons OAuth grisés en mode classique ; mot de passe grisé et boutons actifs en mode OAuth2. Les retours OAuth apparaissent en gras, verts en cas de réussite avec invitation à enregistrer, rouges en cas d’erreur. Le bouton Enregistrer porte une coche et une bordure vertes.
 - Historique associé au propriétaire au moment du lancement, au pseudo de l’acteur et à la configuration. Un transfert de propriété ne transfère pas les anciens journaux.
 
 ## Installation
@@ -87,6 +88,8 @@ Les vérifications SMTP réelles, les parcours Google/Microsoft et les synchroni
 Le test navigateur facultatif se lance avec `python tests/browser_magic_link.py` après installation de Playwright et de Chromium (Edge sous Windows). Il couvre aussi les confirmations, la pause, les suppressions de journaux et la synchronisation manuelle avec processus simulé.
 
 L’image installe `procps` pour fournir `ps`, utilisé par imapsync, et `tzdata` pour les fuseaux horaires. Le build vérifie `ps`, la compilation Perl et `imapsync --version`. En cas d’erreur de dépendance, reconstruire l’image et recréer le conteneur ; un simple redémarrage ne suffit pas. Le code 64 indique un problème d’utilisation d’imapsync : les diagnostics d’erreur sont conservés dans le journal tout en masquant les secrets connus.
+
+Les champs web `oauth2_token1/2` sont transmis au moteur sous ses options réelles `--oauthaccesstoken1/2`. Les anciens arguments `--oauth2_token1/2` ne sont pas reconnus par l’imapsync embarqué et provoquent le code 64. Le build teste désormais aussi les noms d’options OAuth avec `--version`, sans connexion IMAP. Les tests Python exercent le véritable analyseur d’arguments extrait du script lorsque Perl est disponible.
 
 ## Remerciements
 
