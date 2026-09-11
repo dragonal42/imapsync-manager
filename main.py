@@ -93,6 +93,8 @@ def load_config():
     config.setdefault("runs", [])
     config.setdefault("log_debug", False)
     config.setdefault("log_retention_days", 90)
+    config.setdefault("mistral_rps", 1.0)
+    config.setdefault("mistral_model", os.getenv("MISTRAL_MODEL", "mistral-small-latest"))
     for account in config["accounts"]:
         account.setdefault("schedule_state", "RUNNING")
     if ADMIN_EMAIL:
@@ -484,6 +486,19 @@ async def settings(request: Request):
             raise HTTPException(400, "Conservation invalide (1 à 3650 jours)")
         config.update(log_debug=form.get("log_debug") == "on", log_retention_days=days)
     elif request.url.path == "/ai/settings":
+        if "mistral_rps" in form:
+            try:
+                rate = float(str(form["mistral_rps"]).replace(',', '.'))
+                if not 0.01 <= rate <= 100:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise HTTPException(400, "Limite Mistral invalide (0,01 à 100 requêtes/s)")
+            config["mistral_rps"] = rate
+        if "mistral_model" in form:
+            model = str(form["mistral_model"]).strip()
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model):
+                raise HTTPException(400, "Nom de modèle Mistral invalide")
+            config["mistral_model"] = model
         for key in ("sApiKeyMistral", "sApiKeyGemini"):
             value = str(form.get(key, "")).strip()
             if len(value) > 4096 or any(ord(c) < 32 for c in value):
@@ -897,6 +912,9 @@ async def execute(account, actor):
                 save_config(latest)
             owner = next((u for u in load_config()["users"] if u["email"] == account["owner"]), {})
             account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
+            settings = load_config()
+            account["mistral_rps"] = settings["mistral_rps"]
+            account["mistral_model"] = settings["mistral_model"]
             try:
                 await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
                                  active, read_state, save_state, progress)
