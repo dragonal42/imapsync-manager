@@ -137,3 +137,31 @@ Consommation IA en tokens — cumul de cette exécution (2 appels) : entrée : 6
 ```
 
 Référence : [API Mistral Chat Completions](https://docs.mistral.ai/api/endpoint/chat).
+
+
+### Traces d’audit dans les logs Docker
+
+Les événements utilisateur sont émis immédiatement sur stdout, indépendamment de « Log : Niveau Debug », et consultables avec `docker compose logs imapsync-manager`. Chaque événement tient sur une ligne : date à la seconde avec fuseau `TZ`, niveau, type, pseudo, email et données JSON compactes.
+
+```text
+2026-09-11T10:15:00+02:00 [INFO] [MAGIC_LINK_REQUEST] pseudo="Alice" | email="alice@example.com" | data={"outcome":"accepted"}
+2026-09-11T10:15:01+02:00 [INFO] [MAGIC_LINK_SENT] pseudo="Alice" | email="alice@example.com" | data={}
+2026-09-11T10:16:12+02:00 [INFO] [LOGIN_SUCCESS] pseudo="Alice" | email="alice@example.com" | data={}
+2026-09-11T10:20:00+02:00 [INFO] [CONFIG_DELETED] pseudo="Alice" | email="alice@example.com" | data={"configuration":{"id":"exemple","label":"Migration","owner":"alice@example.com","pass1":"[MASQUÉ]"}}
+```
+
+Les demandes refusées sont distinguées par `unknown_user` ou `rate_limited` dans `outcome`. Une demande acceptée ne signifie pas que le mail a été envoyé : `MAGIC_LINK_SENT` confirme l’envoi SMTP, `MAGIC_LINK_DELIVERY_FAILED` signale un échec. `LOGIN_SUCCESS` n’est émis qu’après création de la session ; ouvrir la page du lien sans confirmer ne constitue pas une connexion.
+
+`CONFIG_DELETED` contient la configuration supprimée, après sauvegarde réussie, et identifie l’utilisateur qui a effectué la suppression (qui peut être l’administrateur). Les mots de passe, jetons, secrets et arguments contenant des identifiants sont masqués. Aucun Magic Link, cookie de session, jeton OAuth ou message brut du serveur SMTP n’est journalisé. Les retours à la ligne des données sont échappés pour préserver une ligne par événement.
+
+Les synchronisations manuelles produisent `MANUAL_SYNC_REQUESTED` à l’acceptation de la demande et `MANUAL_SYNC_FINISHED` à la fin, avec le même `run_id`, le résultat et les compteurs. Une demande rejetée par la validation n’est pas annoncée comme lancée.
+
+Exemples de recherche :
+
+```bash
+docker compose logs --no-log-prefix imapsync-manager | grep -F '[LOGIN_SUCCESS]'
+docker compose logs --no-log-prefix imapsync-manager | grep -F 'alice@example.com'
+docker compose logs --no-log-prefix imapsync-manager | grep -F '[CONFIG_DELETED]'
+```
+
+Ces traces relèvent de la conservation des logs Docker configurée sur l’hôte ; la purge applicative des historiques à 90 jours ne supprime pas les logs Docker. Reconstruire l’image après fusion pour inclure `audit_logging.py`.
