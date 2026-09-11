@@ -111,6 +111,16 @@ L’option de suppression après transfert transmet `--delete1` une seule fois. 
 
 Après fusion, reconstruire l’image (`docker compose up -d --build imapsync-manager`). Les tests simulent les fournisseurs IA et IMAP, sans envoyer de données à un fournisseur ni déplacer de vrais messages.
 
+## Niveaux de log, consommation IA et conservation
+
+Dans **Administration → Journaux**, « Log : Niveau Debug » est décoché par défaut. Les nouvelles exécutions conservent alors uniquement le résultat, le nombre de messages transférés annoncé par le bilan imapsync, les compteurs IA (analysés, frauduleux/spams détectés, effectivement déplacés) et les erreurs utiles. Si imapsync ne fournit pas son bilan, le compteur indique « non communiqué », pas zéro. Le mode Debug conserve le détail actuel (fin de journal limitée à 64 Kio, secrets masqués) et le même résumé. Le niveau est fixé au début de l’exécution ; changer la case ne recrée pas les détails d’un ancien journal résumé.
+
+Les deux niveaux, ainsi que le rapport quotidien d’erreurs, incluent la consommation de tokens renvoyée par Mistral ou Gemini : entrée, sortie, total et, si disponibles, cache et raisonnement. Les compteurs cache/raisonnement sont présentés séparément sans les ajouter une seconde fois au total fournisseur. Les appels dont la réponse de classification est invalide restent comptabilisés si leur usage est disponible. Une information absente est indiquée comme non communiquée ; les totaux incomplets sont signalés comme partiels. Aucun montant monétaire n’est inventé à partir de ces compteurs.
+
+La conservation est de **90 jours par défaut**, réglable de 1 à 3650 jours. La rotation intégrée purge les entrées expirées et leur contenu dans `config.json`, ainsi que les lignes datées expirées de `daily_errors.log`, au démarrage, à l’enregistrement des paramètres et chaque heure dans une tâche indépendante du planificateur IMAP. Elle utilise la date de fin, ou la date de début pour les anciens journaux sans date de fin. Les journaux en cours et ceux dont la date est inexploitable sont conservés. Les configurations, comptes, dernières dates d’exécution et le suivi anti-doublon `ai_state.json` restent intacts. Il ne faut pas appliquer le programme système logrotate directement à `config.json`, qui contient également les configurations.
+
+Après fusion, reconstruire le conteneur pour inclure le nouveau module `run_logging.py`. Les essais automatisés simulent IMAP et les réponses IA et ne traitent aucun email réel.
+
 ## Remerciements
 
 Basé sur [imapsync de Gilles LAMIRAL](https://imapsync.lamiral.info/).

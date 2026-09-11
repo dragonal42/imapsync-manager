@@ -178,6 +178,9 @@ def test_preprocessing_failure_blocks_sync(env, monkeypatch):
 
 
 def test_delete1_once_and_successful_info_messages(env, monkeypatch):
+    config = main.load_config()
+    config["log_debug"] = True
+    main.save_config(config)
     account = copy.deepcopy(main.load_config()['accounts'][0])
     account.update(delete1='on', bPretraitementIA=True, sMoteurIA='Mistral')
     order = []
