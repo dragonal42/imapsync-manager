@@ -119,6 +119,18 @@ Après fusion, reconstruire l’image (`docker compose up -d --build imapsync-ma
 
 ## Niveaux de log, consommation IA et conservation
 
+### Diagnostic IA manuel
+
+Dans `/manual`, la section **Transfert IMAP** conserve les commandes de transfert. La nouvelle section **Analyse IA** utilise uniquement la connexion Source : la destination peut rester vide. Choisir Mistral/Gemini, la période, le dossier IMAP (INBOX par défaut), les sous-dossiers éventuels et, si nécessaire, la réanalyse des messages déjà traités. Les filtres non lu, non supprimé et récent restent actifs ; les listes personnelles d’expéditeurs restent appliquées. Le dossier explicitement saisi est analysé, même si son nom correspond à une exclusion automatique ; les branches spéciales restent exclues du parcours récursif. Les configurations automatiques conservent leur périmètre INBOX habituel.
+
+Le mode **Simulation** ne déplace rien et ne modifie pas le suivi des UID ; les appels fournisseur restent réels et peuvent consommer des tokens. Le mode **Tri** demande une confirmation avant de déplacer les spams/arnaques vers les quarantaines d’INBOX. Une copie précédemment interrompue bloque toujours le tri pour éviter une suppression non vérifiée.
+
+Le bouton **Lancer l’Analyse IA** alimente **Suivi d’exécution**, avec arrêt et lien vers l’historique privé, comme un transfert. Le Debug est forcé pour ce lancement uniquement. Les identifiants ne sont pas enregistrés comme configuration ; les traces Docker distinguent MANUAL_AI_REQUESTED et MANUAL_AI_FINISHED.
+
+Les diagnostics montrent les étapes IMAP, le modèle, les tailles des métadonnées, le nombre d’en-têtes/URLs, le résultat de validation, la durée et les tokens connus. Les erreurs distinguent HTTP 401 (clé), 403 (droits), 404 (modèle/endpoint), 429 (quota/débit), TLS, DNS/connexion, timeout, limite de génération, structure de réponse absente et JSON/verdict invalide. Aucun corps de réponse fournisseur, email, URL extraite ou clé n’est recopié dans les diagnostics. Les erreurs détaillées restent également visibles dans les tâches automatiques et leur rapport quotidien.
+
+Pour diagnostiquer un ancien message générique : reconstruire l’image après fusion, renseigner la source dans `/manual`, laisser **Simulation**, puis lancer l’analyse et relever la nouvelle ligne d’erreur. Les anciennes exécutions ne contiennent pas les détails perdus et ne peuvent pas être enrichies rétroactivement.
+
 Dans **Administration → Journaux**, « Log : Niveau Debug » est décoché par défaut. Les nouvelles exécutions conservent alors uniquement le résultat, le nombre de messages transférés annoncé par le bilan imapsync, les compteurs IA (analysés, frauduleux/spams détectés, effectivement déplacés) et les erreurs utiles. Si imapsync ne fournit pas son bilan, le compteur indique « non communiqué », pas zéro. Le mode Debug conserve le détail actuel (fin de journal limitée à 64 Kio, secrets masqués) et le même résumé. Le niveau est fixé au début de l’exécution ; changer la case ne recrée pas les détails d’un ancien journal résumé.
 
 Les deux niveaux, ainsi que le rapport quotidien d’erreurs, incluent la consommation de tokens renvoyée par Mistral ou Gemini : entrée, sortie, total et, si disponibles, cache et raisonnement. Les compteurs cache/raisonnement sont présentés séparément sans les ajouter une seconde fois au total fournisseur. Les appels dont la réponse de classification est invalide restent comptabilisés si leur usage est disponible. Une information absente est indiquée comme non communiquée ; les totaux incomplets sont signalés comme partiels. Aucun montant monétaire n’est inventé à partir de ces compteurs.

@@ -684,13 +684,14 @@ async def manual_sync(request: Request):
         raise HTTPException(400, "Utilisez les options proposées ; les arguments libres ne sont pas autorisés")
     if any(p["owner"] == request.state.user["email"] and key.startswith("manual-") for key, p in processes.items()):
         raise HTTPException(409, "Une synchronisation manuelle est déjà en cours dans votre espace")
+    ai_only = form.get("action") == "ai"
     account = {"id": "manual-" + secrets.token_hex(12), "owner": request.state.user["email"], "label": "Synchronisation manuelle"}
-    for key in ("host1", "host2", "user1", "user2"):
+    for key in (("host1", "user1") if ai_only else ("host1", "host2", "user1", "user2")):
         value = str(form.get(key, "")).strip()
         if not value or len(value) > 255 or value.startswith("-") or any(ord(c) < 32 for c in value):
             raise HTTPException(400, "Champ invalide : " + key)
         account[key] = value
-    for side in ("1", "2"):
+    for side in (("1",) if ai_only else ("1", "2")):
         mech = str(form.get("authmech" + side, "PLAIN"))
         if mech not in {"PLAIN", "XOAUTH2"}:
             raise HTTPException(400, "Authentification IMAP invalide")
@@ -699,20 +700,38 @@ async def manual_sync(request: Request):
         account["token" + side] = str(form.get("oauth2_token" + side, ""))
         if not account[("token" if mech == "XOAUTH2" else "pass") + side]:
             raise HTTPException(400, "Renseignez les identifiants de la messagerie " + side)
-    account["options"] = ["--" + f for f in ("delete1", "delete2", "dry", "justlogin", "justfolders", "justfoldersizes") if form.get(f) == "on"]
-    if "--delete1" in account["options"] and "--delete2" in account["options"]:
-        raise HTTPException(400, "Choisissez une seule option de suppression : source ou destination")
-    for key in ("subfolder1", "subfolder2"):
-        value = str(form.get(key, ""))
-        if value:
-            if len(value) > 255 or value.startswith("-") or any(ord(c) < 32 for c in value):
-                raise HTTPException(400, "Dossier invalide")
-            account["options"] += ["--" + key, value]
+    if ai_only:
+        engine = str(form.get("sMoteurIA", "Mistral"))
+        if engine not in {"Mistral", "Gemini"}:
+            raise HTTPException(400, "Moteur IA invalide")
+        try:
+            days = int(form.get("nPeriodeJours", "5"))
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Période IA invalide")
+        folder = str(form.get("source_folder", "INBOX")).strip(" ")
+        if not 1 <= days <= 365 or not folder or len(folder) > 255 or not folder.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in folder):
+            raise HTTPException(400, "Période ou dossier IA invalide (nom IMAP ASCII)")
+        mode = str(form.get("ai_mode", "preview"))
+        if mode not in {"preview", "move"}:
+            raise HTTPException(400, "Mode IA invalide")
+        account.update(label="Analyse IA manuelle", manual_ai=True, bActiverSynchro=False, bPretraitementIA=True,
+                       sMoteurIA=engine, nPeriodeJours=days, source_folder=folder, ai_dry=mode == "preview",
+                       ai_recursive=form.get("ai_recursive") == "on", ai_recheck=form.get("ai_recheck") == "on")
+    else:
+        account["options"] = ["--" + f for f in ("delete1", "delete2", "dry", "justlogin", "justfolders", "justfoldersizes") if form.get(f) == "on"]
+        if "--delete1" in account["options"] and "--delete2" in account["options"]:
+            raise HTTPException(400, "Choisissez une seule option de suppression : source ou destination")
+        for key in ("subfolder1", "subfolder2"):
+            value = str(form.get(key, ""))
+            if value:
+                if len(value) > 255 or value.startswith("-") or any(ord(c) < 32 for c in value):
+                    raise HTTPException(400, "Dossier invalide")
+                account["options"] += ["--" + key, value]
     run_id = secrets.token_hex(12)
     processes[account["id"]] = {"owner": account["owner"], "process": None, "cancelled": False, "run_id": run_id}
-    audit("MANUAL_SYNC_REQUESTED", request.state.user, run_id=run_id, configuration=account)
+    audit("MANUAL_AI_REQUESTED" if ai_only else "MANUAL_SYNC_REQUESTED", request.state.user, run_id=run_id, configuration=account)
     spawn(execute(account, copy.deepcopy(request.state.user)))
-    return {"run_id": run_id, "message": "Synchronisation manuelle lancée"}
+    return {"run_id": run_id, "message": "Analyse IA manuelle lancée" if ai_only else "Synchronisation manuelle lancée"}
 
 
 @app.get("/api/logs/{run_id}")
@@ -816,7 +835,7 @@ async def execute(account, actor):
             current["status"] = run["status"]
     save_config(config)
     status = "Erreur"
-    debug = bool(config.get("log_debug", False))
+    debug = bool(account.get("manual_ai") or config.get("log_debug", False))
     metrics = RunMetrics(account)
     warnings = []
     note = ""
@@ -868,7 +887,7 @@ async def execute(account, actor):
                 if isinstance(message, dict):
                     metrics.event(message)
                 else:
-                    output.extend((message + "\n").encode())
+                    output.extend(("[" + datetime.now(timezone.utc).isoformat(timespec="seconds") + "] " + message + "\n").encode())
                     del output[:-65536]
                 run["log"] = log_snapshot("Synchronisation...")
                 latest = load_config()
@@ -956,7 +975,7 @@ async def execute(account, actor):
                 for line in metrics.summary(status, "\n".join(warnings + ([note] if note else []))).splitlines():
                     report.write(f"[{finished}] [{account['owner']}] [{actor['pseudo']}] Tâche {account_id} : {line}\n")
         if account_id.startswith("manual-"):
-            audit("MANUAL_SYNC_FINISHED", actor, level="ERROR" if status == "Erreur" else "INFO",
+            audit("MANUAL_AI_FINISHED" if account.get("manual_ai") else "MANUAL_SYNC_FINISHED", actor, level="ERROR" if status == "Erreur" else "INFO",
                   run_id=run["id"], status=status, metrics=metrics.data)
         processes.pop(account_id, None)
         execution_dir.cleanup()
