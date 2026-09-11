@@ -112,10 +112,13 @@ def test_failed_ai_usage_in_minimal_and_daily_error_logs(env, monkeypatch):
         args[-1]({'usage': {'total': 19}})
         raise ai.PreprocessingError('Réponse IA invalide')
     monkeypatch.setattr(main, 'preprocess', fail)
+    completed = type('Process', (), {'returncode': 0, 'wait': AsyncMock(),
+                     'stdout': type('Output', (), {'read': AsyncMock(return_value=b'')})()})()
+    monkeypatch.setattr(main.asyncio, 'create_subprocess_exec', AsyncMock(return_value=completed))
     main.processes['a'] = {'process': None, 'cancelled': False}
     asyncio.run(main.execute(account, {'pseudo': 'Alice'}))
     run = main.load_config()['runs'][-1]
-    assert run['status'] == 'Erreur' and 'total : 19' in run['log']
+    assert run['status'] == 'Succès avec avertissement' and 'total : 19' in run['log']
     assert 'Réponse IA invalide' in run['log']
     assert 'total : 19' in main.CONFIG_FILE.with_name('daily_errors.log').read_text(encoding='utf-8')
 

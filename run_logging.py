@@ -35,10 +35,13 @@ class RunMetrics:
                      'engine': account.get('sMoteurIA', 'Mistral'), 'transferred': None,
                      'analysed': 0, 'fraudulent': 0, 'quarantined': 0, 'ai_calls': 0,
                      'whitelisted': 0, 'blacklisted': 0, 'blacklist_moved': 0,
-                     'usage': {}, 'usage_reports': {}, 'returncode': None}
+                     'folders': {}, 'usage': {}, 'usage_reports': {}, 'returncode': None}
         self.pending = b''
 
     def event(self, event):
+        if 'folder_scan' in event:
+            scan = event['folder_scan']
+            self.data['folders'][scan['folder']] = dict(scan)
         if 'usage' in event:
             self.data['ai_calls'] += 1
             for key, count in event['usage'].items():
@@ -72,6 +75,8 @@ class RunMetrics:
         else:
             lines.append('Vérification de la source uniquement — sans synchronisation.')
         if d['ai_enabled']:
+            for scan in d['folders'].values():
+                lines.append(f"Dossier IA {scan['folder']} | Nb présents : {scan['total']} | Nb non lus non supprimés : {scan['unread']} | Nb candidats SINCE : {scan['candidates']} | Nb déjà traités : {scan['already_done']} | Nb hors période exacte : {scan['too_old']}")
             lines.append(f"Emails analysés par IA {d['engine']} : {d['analysed']} | Nb frauduleux/spams détectés : {d['fraudulent']} | Nb déplacés : {d['quarantined']}")
             if d["whitelisted"] or d["blacklisted"]:
                 lines.append(f"Nb acceptés par WhiteList : {d['whitelisted']} | Nb détectés par BlackList : {d['blacklisted']} | Nb déplacés dans _02-BlackList : {d['blacklist_moved']}")
