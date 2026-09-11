@@ -63,7 +63,7 @@ def classify(engine, key, metadata):
                 headers={"Authorization": "Bearer " + key}, json={
                     "model": os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
                     "messages": [{"role": "system", "content": PROMPT}, {"role": "user", "content": payload}],
-                    "response_format": {"type": "json_object"}, "max_tokens": 128}, timeout=(10, 45))
+                    "response_format": {"type": "json_object"}, "stream": False, "max_tokens": 128}, timeout=(10, 45))
             response.raise_for_status()
             body = response.json()
             usage = token_usage(engine, body)
