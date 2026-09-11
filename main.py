@@ -22,6 +22,7 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from ai_preprocessing import preprocess, PreprocessingError
 from run_logging import RunMetrics
+from audit_logging import audit
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -272,11 +273,14 @@ def send_magic_link(email, token):
 async def deliver_link(email, token):
     try:
         await asyncio.to_thread(send_magic_link, email, token)
+        user = next((u for u in load_config()["users"] if u["email"] == email), {"email": email})
+        audit("MAGIC_LINK_SENT", user)
     except Exception:
         data = auth_data()
         data["links"].pop(digest(token), None)
         write_json(AUTH_FILE, data)
-        logger.error("Échec de livraison SMTP du lien magique")
+        user = next((u for u in load_config()["users"] if u["email"] == email), {"email": email})
+        audit("MAGIC_LINK_DELIVERY_FAILED", user, level="ERROR")
 
 
 @app.post("/login")
@@ -291,11 +295,14 @@ async def request_link(request: Request):
         limit = data["limits"].setdefault(limit_key, {"count": 0, "expires": time.time() + 900})
         limit["count"] += 1
         limited |= limit["count"] > maximum
-    known = any(u["email"] == email for u in load_config()["users"])
+    user = next((u for u in load_config()["users"] if u["email"] == email), None)
+    known = user is not None
     if known and not limited:
         token = secrets.token_urlsafe(32)
         data["links"][digest(token)] = {"email": email, "expires": time.time() + MAGIC_TTL}
     write_json(AUTH_FILE, data)
+    audit("MAGIC_LINK_REQUEST", user or {"email": email},
+          outcome="rate_limited" if limited else ("accepted" if known else "unknown_user"))
     if known and not limited:
         spawn(deliver_link(email, token))
     return render(request, "login.html", sent=True)
@@ -321,6 +328,7 @@ async def consume_link(request: Request):
     write_json(AUTH_FILE, data)
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(COOKIE, token, max_age=SESSION_TTL, httponly=True, secure=True, samesite="lax", path="/")
+    audit("LOGIN_SUCCESS", user)
     return response
 
 
@@ -512,6 +520,7 @@ async def delete_account(request: Request, account_id: str):
         raise HTTPException(409, "Arrêtez la synchronisation avant de supprimer")
     config["accounts"].remove(account)
     save_config(config)
+    audit("CONFIG_DELETED", request.state.user, configuration=account)
     return RedirectResponse("/dashboard", status_code=303)
 
 
@@ -633,6 +642,7 @@ async def manual_sync(request: Request):
             account["options"] += ["--" + key, value]
     run_id = secrets.token_hex(12)
     processes[account["id"]] = {"owner": account["owner"], "process": None, "cancelled": False, "run_id": run_id}
+    audit("MANUAL_SYNC_REQUESTED", request.state.user, run_id=run_id, configuration=account)
     spawn(execute(account, copy.deepcopy(request.state.user)))
     return {"run_id": run_id, "message": "Synchronisation manuelle lancée"}
 
@@ -862,6 +872,9 @@ async def execute(account, actor):
             with CONFIG_FILE.with_name("daily_errors.log").open("a", encoding="utf-8") as report:
                 for line in metrics.summary(status, note).splitlines():
                     report.write(f"[{finished}] [{account['owner']}] [{actor['pseudo']}] Tâche {account_id} : {line}\n")
+        if account_id.startswith("manual-"):
+            audit("MANUAL_SYNC_FINISHED", actor, level="ERROR" if status == "Erreur" else "INFO",
+                  run_id=run["id"], status=status, metrics=metrics.data)
         processes.pop(account_id, None)
         execution_dir.cleanup()
 
