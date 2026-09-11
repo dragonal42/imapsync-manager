@@ -124,3 +124,16 @@ Après fusion, reconstruire le conteneur pour inclure le nouveau module `run_log
 ## Remerciements
 
 Basé sur [imapsync de Gilles LAMIRAL](https://imapsync.lamiral.info/).
+
+
+### Exemple du cumul Mistral
+
+L’appel Chat Completions précise `"stream": false` pour recevoir la réponse JSON complète. Le résultat se trouve dans `choices` et la consommation dans `usage`. Les compteurs sont additionnés pour tous les appels IA d’une même exécution, en mode résumé comme en Debug. Ils repartent de zéro à la prochaine exécution ; ce n’est pas un total mensuel du compte Mistral.
+
+Exemple : une première réponse annonce 25 tokens en entrée et 10 en sortie (35 au total), puis une seconde 40 en entrée et 15 en sortie (55 au total). Le journal affiche :
+
+```text
+Consommation IA en tokens — cumul de cette exécution (2 appels) : entrée : 65 ; sortie : 25 ; total : 90.
+```
+
+Référence : [API Mistral Chat Completions](https://docs.mistral.ai/api/endpoint/chat).

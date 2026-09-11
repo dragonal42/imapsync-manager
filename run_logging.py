@@ -77,7 +77,7 @@ class RunMetrics:
                     reports = d['usage_reports'][key]
                     suffix = f" (partiel : {reports}/{d['ai_calls']} appels)" if reports < d['ai_calls'] else ''
                     values.append(f'{label} : {count}{suffix}')
-            lines.append('Consommation IA en tokens : ' + (' ; '.join(values) if values else 'non communiquée') + '.')
+            lines.append(f"Consommation IA en tokens — cumul de cette exécution ({d['ai_calls']} appels) : " + (' ; '.join(values) if values else 'non communiquée') + '.')
             lines.append('Coût monétaire : non communiqué par le fournisseur (aucune estimation).')
         if d['returncode'] is not None:
             lines.append(f"Code de retour imapsync : {d['returncode']}.")

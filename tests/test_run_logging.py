@@ -164,3 +164,38 @@ def test_hourly_rotation_independent_of_sync(monkeypatch):
         asyncio.run(main.log_rotation_loop())
     assert calls == ['purge']
     assert sleep.call_args.args == (3600,)
+
+
+@pytest.mark.parametrize('debug', [False, True])
+def test_mistral_multiple_responses_accumulate_in_log(env, monkeypatch, debug):
+    config = main.load_config()
+    config['log_debug'] = debug
+    main.save_config(config)
+    account = config['accounts'][0]
+    account.update(bActiverSynchro=False, bPretraitementIA=True, sMoteurIA='Mistral')
+    responses = iter([
+        {'prompt_tokens': 25, 'completion_tokens': 10, 'total_tokens': 35},
+        {'prompt_tokens': 40, 'completion_tokens': 15, 'total_tokens': 55}])
+    def post(url, **kwargs):
+        assert url == 'https://api.mistral.ai/v1/chat/completions'
+        assert kwargs['json']['stream'] is False
+        usage = next(responses)
+        class Response:
+            def raise_for_status(self): pass
+            def json(self):
+                return {'choices': [{'finish_reason': 'stop', 'message': {'content': '{"verdict":"legitimate"}'}}], 'usage': usage}
+        return Response()
+    monkeypatch.setattr(ai.requests, 'post', post)
+    async def preprocess(*args):
+        for index in range(2):
+            result = await asyncio.to_thread(ai.classify, 'Mistral', 'test-key', {'subject': 'test'})
+            args[-1]({'usage': result.usage, 'verdict': str(result)})
+    monkeypatch.setattr(main, 'preprocess', preprocess)
+    main.processes['a'] = {'process': None, 'cancelled': False}
+    asyncio.run(main.execute(account, {'pseudo': 'Alice'}))
+    run = main.load_config()['runs'][-1]
+    assert run['status'] == 'Succès'
+    assert run['metrics']['usage'] == {'input': 65, 'output': 25, 'total': 90}
+    assert 'cumul de cette exécution (2 appels)' in run['log']
+    assert 'entrée : 65 ; sortie : 25 ; total : 90' in run['log']
+    assert 'partiel' not in run['log']
