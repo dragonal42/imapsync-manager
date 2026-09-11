@@ -223,7 +223,23 @@ def check():
             page.get_by_role('button', name='Lancer la synchronisation', exact=True).click()
             page.wait_for_function("document.getElementById('manual-status').textContent === 'Succès'")
             assert 'Copied 3 messages' in page.locator('#output').inner_text()
+            page.get_by_label('Serveur IMAP destination', exact=True).fill('')
+            page.get_by_label('Identifiant destination', exact=True).fill('')
+            page.get_by_label('Dossier source à analyser (nom IMAP)', exact=True).fill('INBOX.Test')
+            async def check_ai(*args):
+                assert args[0]['source_folder'] == 'INBOX.Test' and args[0]['ai_dry']
+                args[-1]('Diagnostic IA manuel visible')
+                raise main.PreprocessingError('Mistral | HTTP 401 | clé API invalide')
+            main.preprocess = check_ai
+            page.get_by_role('button', name='Lancer l’Analyse IA', exact=True).click()
+            page.wait_for_function("document.getElementById('manual-status').textContent === 'Erreur'")
+            assert 'Diagnostic IA manuel visible' in page.locator('#output').inner_text()
+            assert 'HTTP 401' in page.locator('#output').inner_text()
+            assert main.asyncio.create_subprocess_exec.await_count == 1
             page.get_by_role('link', name='Tableau de bord', exact=True).click()
+            page.locator('#historique tbody tr').first.get_by_role('button', name='Supprimer', exact=True).click()
+            page.locator('.swal2-confirm').click()
+            page.wait_for_function("document.querySelectorAll('#historique tbody tr').length === 1")
             page.locator('#historique tbody tr').first.get_by_role('button', name='Supprimer', exact=True).click()
             page.locator('.swal2-confirm').click()
             page.wait_for_function("document.querySelector('#historique tbody').textContent.includes('Aucune exécution')")

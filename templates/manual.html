@@ -9,13 +9,21 @@
 <label>Jeton OAuth2 {{ title|lower }}<input type="password" name="oauth2_token{{ side }}" id="oauth2_token{{ side }}" autocomplete="off" disabled></label>
 <input type="hidden" id="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p>
 <label>Sous-dossier {{ title|lower }} (facultatif)<input name="subfolder{{ side }}" maxlength="255"></label></section>{% endfor %}</div>
-<section><h2>Options</h2><div class="grid">
+<section><h2>Transfert IMAP</h2><div class="grid">
 <label class="check"><input type="checkbox" name="dry"> Simulation sans modification</label>
 <label class="check"><input type="checkbox" name="justlogin"> Tester uniquement la connexion</label>
 <label class="check"><input type="checkbox" name="justfoldersizes"> Afficher uniquement la taille des dossiers</label>
 <label class="check"><input type="checkbox" name="justfolders"> Créer uniquement les dossiers</label>
 <label class="check"><input type="checkbox" name="delete1"> Supprimer les messages source après transfert</label>
 <label class="check"><input type="checkbox" name="delete2"> Supprimer les messages destination absents de la source</label>
-</div><div class="actions"><button id="bt-sync" type="submit">Lancer la synchronisation</button><button id="bt-abort" type="button" class="danger" disabled>Arrêter</button></div></section></form>
+</div><div class="actions"><button id="bt-sync" type="submit">Lancer la synchronisation</button><button id="bt-abort" type="button" class="danger" disabled>Arrêter</button></div></section>
+<section id="manual-ai"><h2>Analyse IA</h2><p>Utilise uniquement les identifiants Source ci-dessus, sans transfert vers la destination. Le suivi détaillé est activé pour ce lancement, même si le Debug global est désactivé.</p><div class="grid">
+<label>Moteur d’analyse<select name="sMoteurIA"><option>Mistral</option><option>Gemini</option></select></label>
+<label>Type d’analyse<select name="ai_mode"><option value="preview">Simulation — analyser sans déplacer</option><option value="move">Tri — déplacer les spams et arnaques</option></select></label>
+<label>Dossier source à analyser (nom IMAP)<input name="source_folder" value="INBOX" maxlength="255"></label>
+<label>Période en jours<input name="nPeriodeJours" type="number" min="1" max="365" value="5"></label>
+<label class="check"><input name="ai_recursive" type="checkbox"> Inclure les sous-dossiers autorisés</label>
+<label class="check"><input name="ai_recheck" type="checkbox"> Réanalyser les messages déjà traités</label>
+</div><p class="muted">Seuls les messages non lus, non supprimés et récents sont retenus. Les WhiteList et BlackList du propriétaire restent appliquées. Les sous-dossiers Sent, Trash, Junk, Drafts, Archive, spam et les quarantaines sont exclus. Un dossier explicitement saisi est analysé directement. En simulation, aucun message n’est déplacé ou marqué comme traité ; les appels IA peuvent consommer des tokens.</p><div class="actions"><button id="bt-ai" type="button">Lancer l’Analyse IA</button></div></section></form>
 <section><h2>Suivi d’exécution</h2><p id="manual-status" role="status">Aucune exécution en cours.</p><pre id="output" aria-live="off"></pre><a id="manual-log" hidden>Ouvrir le journal</a></section>
 <script defer src="/static/auth.js"></script><script defer src="/static/manual.js"></script>{% endblock %}
