@@ -56,6 +56,48 @@ def compact_message(raw):
     return {"headers": headers, "subject": str(message.get("Subject", ""))[:500], "urls": sorted(urls)}
 
 
+def provider_debug(response, key, metadata):
+    """Extract diagnostic fields only; never dump request bodies or all headers."""
+    secrets = [key]
+    def collect(value):
+        if isinstance(value, str) and value:
+            secrets.append(value)
+        elif isinstance(value, dict):
+            for item in value.values(): collect(item)
+        elif isinstance(value, list):
+            for item in value: collect(item)
+    collect(metadata)
+    def safe(value):
+        text = str(value)
+        for secret in sorted(filter(None, secrets), key=len, reverse=True):
+            text = text.replace(secret, '[MASQUÉ]')
+        text = re.sub(r'https?://[^\s"<>]+', '[URL MASQUÉE]', text, flags=re.I)
+        text = re.sub(r'[\w.+%-]+@[\w.-]+\.[\w-]+', '[EMAIL MASQUÉ]', text)
+        text = re.sub(r'(?i)(bearer\s+|(?:api[_ -]?key|password|token|secret)\s*[:=]\s*)[^\s,;]+', r'\1[MASQUÉ]', text)
+        return ' '.join(text.split())[:1000]
+    if response is None:
+        return 'Réponse fournisseur : aucune réponse HTTP reçue.'
+    details = {}
+    try:
+        body = response.json()
+        error = body.get('error', body) if isinstance(body, dict) else None
+        if isinstance(error, str):
+            details['message'] = safe(error)
+        elif isinstance(error, dict):
+            for name in ('message', 'type', 'code', 'param', 'status'):
+                value = error.get(name)
+                if isinstance(value, (str, int, float)):
+                    details[name] = safe(value)
+    except (ValueError, TypeError, AttributeError):
+        details['format'] = 'Réponse non JSON ; corps brut non affiché'
+    headers = {}
+    for name, value in getattr(response, 'headers', {}).items():
+        lower = name.lower()
+        if lower in {'retry-after', 'x-request-id', 'request-id', 'content-type'} or re.fullmatch(r'(?:x-)?ratelimit-(?:limit|remaining|reset)(?:-[a-z-]+)?', lower):
+            headers[lower] = safe(value)
+    return 'Réponse fournisseur (champs diagnostiques) : ' + json.dumps(details, ensure_ascii=False) + '\nEn-têtes de diagnostic : ' + (json.dumps(headers, ensure_ascii=False) if headers else 'non communiqués')
+
+
 def classify(engine, key, metadata):
     payload = json.dumps(metadata, ensure_ascii=False)
     usage = {}
@@ -124,6 +166,7 @@ def classify(engine, key, metadata):
         http = f"HTTP {status}" if type(status) is int else "aucune réponse HTTP"
         error = PreprocessingError(f"Analyse IA indisponible ou réponse invalide. {engine} | {http} | {stage} | durée : {time.monotonic() - started:.2f} s. Aucun déplacement pour ce message.")
         error.usage = usage
+        error.debug = provider_debug(response, key, metadata)
         raise error from None
 
 
@@ -318,6 +361,9 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                         verdict = await call(classify, engine, key, metadata)
                         progress(f"UID {uid_text} : " + getattr(verdict, "diagnostic", "réponse reçue") + f" | verdict : {verdict}.")
                     except PreprocessingError as error:
+                        progress(f"[ERROR IA] UID {uid_text} : {error}")
+                        for line in getattr(error, "debug", "").splitlines():
+                            progress("[ERROR IA DEBUG] " + line)
                         progress({"usage": getattr(error, "usage", {})})
                         raise
                     progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
