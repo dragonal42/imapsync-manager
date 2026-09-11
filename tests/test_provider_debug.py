@@ -7,6 +7,7 @@ import ai_preprocessing as ai
 import main
 from test_ai_preprocessing import Mailbox
 from test_tenants import env
+from test_mistral_rate import rate_clock
 
 
 def response():
@@ -27,7 +28,7 @@ def test_diagnostics_mask_secrets_and_email_metadata():
 
 
 @pytest.mark.parametrize('debug', [False, True])
-def test_error_immediately_after_call_and_details_only_debug(env, monkeypatch, debug):
+def test_error_immediately_after_call_and_details_only_debug(env, monkeypatch, debug, rate_clock):
     config = main.load_config()
     config.update(log_debug=debug, sApiKeyMistral='SECRET')
     main.save_config(config)

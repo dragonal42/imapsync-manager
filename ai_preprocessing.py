@@ -7,6 +7,7 @@ import os
 import re
 import ssl
 import time
+import threading
 from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import BytesParser
@@ -32,6 +33,59 @@ HEADERS = ("from", "reply-to", "return-path", "authentication-results", "receive
            "x-spam-status", "x-spam-flag", "x-spam-score", "received", "date")
 MAX_MESSAGE = 2 * 1024 * 1024
 _locks = {}
+_rate_lock = threading.Lock()
+_mistral_next = 0.0
+_rate_now = time.monotonic
+_rate_sleep = asyncio.sleep
+
+
+async def mistral_call(account, key, metadata, active, call, progress):
+    """One shared dispatch budget and 429 cooldown for this application process."""
+    global _mistral_next
+    interval = 1 / float(account.get('mistral_rps', 1))
+    for attempt in range(3):
+        announced = False
+        while True:
+            if active['cancelled']:
+                raise PreprocessingError('Arrêt demandé pendant l’attente Mistral.')
+            with _rate_lock:
+                remaining = _mistral_next - _rate_now()
+                if remaining <= 0:
+                    _mistral_next = _rate_now() + interval
+                    break
+            if not announced:
+                progress('Mistral : attente du créneau partagé ou du délai après HTTP 429.')
+                announced = True
+            await _rate_sleep(min(remaining, 0.25))
+        progress(f'Mistral : envoi de la tentative {attempt + 1}/3 | limite : {1 / interval:g} requêtes/s.')
+        try:
+            return await call(classify, 'Mistral', key, metadata, account.get('mistral_model'))
+        except PreprocessingError as error:
+            if getattr(error, 'http_status', None) != 429:
+                raise
+            delay = getattr(error, 'retry_after', 60)
+            with _rate_lock:
+                _mistral_next = max(_mistral_next, _rate_now() + delay)
+            if attempt == 2:
+                raise
+            progress({'usage': getattr(error, 'usage', {})})
+            progress(f'[ERROR IA] HTTP 429 : nouvelle tentative après {delay:g} secondes (délai partagé).')
+            for line in getattr(error, 'debug', '').splitlines():
+                progress('[ERROR IA DEBUG] ' + line)
+
+
+def retry_delay(response):
+    value = getattr(response, 'headers', {}).get('Retry-After', '')
+    try:
+        delay = float(value)
+        if not 0 <= delay < float('inf'):
+            return 60
+    except (TypeError, ValueError):
+        try:
+            delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return 60
+    return max(1, delay)
 
 
 def compact_message(raw):
@@ -98,7 +152,7 @@ def provider_debug(response, key, metadata):
     return 'Réponse fournisseur (champs diagnostiques) : ' + json.dumps(details, ensure_ascii=False) + '\nEn-têtes de diagnostic : ' + (json.dumps(headers, ensure_ascii=False) if headers else 'non communiqués')
 
 
-def classify(engine, key, metadata):
+def classify(engine, key, metadata, model=None):
     payload = json.dumps(metadata, ensure_ascii=False)
     usage = {}
     response = None
@@ -108,7 +162,7 @@ def classify(engine, key, metadata):
         if engine == "Mistral":
             response = requests.post("https://api.mistral.ai/v1/chat/completions",
                 headers={"Authorization": "Bearer " + key}, json={
-                    "model": os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
+                    "model": model or os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
                     "messages": [{"role": "system", "content": PROMPT}, {"role": "user", "content": payload}],
                     "response_format": {"type": "json_object"}, "stream": False, "max_tokens": 128}, timeout=(10, 45))
             response.raise_for_status()
@@ -166,6 +220,8 @@ def classify(engine, key, metadata):
         http = f"HTTP {status}" if type(status) is int else "aucune réponse HTTP"
         error = PreprocessingError(f"Analyse IA indisponible ou réponse invalide. {engine} | {http} | {stage} | durée : {time.monotonic() - started:.2f} s. Aucun déplacement pour ce message.")
         error.usage = usage
+        error.http_status = status
+        error.retry_after = retry_delay(response)
         error.debug = provider_debug(response, key, metadata)
         raise error from None
 
@@ -356,9 +412,9 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                     try:
                         metadata = compact_message(content)
                         engine = account["sMoteurIA"]
-                        model = os.getenv("MISTRAL_MODEL", "mistral-small-latest") if engine == "Mistral" else os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+                        model = (account.get("mistral_model") or os.getenv("MISTRAL_MODEL", "mistral-small-latest")) if engine == "Mistral" else os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
                         progress(f"UID {uid_text} : appel {engine} | modèle {model} | taille message : {size[1].decode()} octets | métadonnées : {len(json.dumps(metadata).encode())} octets | en-têtes : {len(metadata['headers'])} | URLs : {len(metadata['urls'])} | sortie JSON" + (" | stream=false | limite de sortie=128" if engine == "Mistral" else ""))
-                        verdict = await call(classify, engine, key, metadata)
+                        verdict = await mistral_call(account, key, metadata, active, call, progress) if engine == 'Mistral' else await call(classify, engine, key, metadata)
                         progress(f"UID {uid_text} : " + getattr(verdict, "diagnostic", "réponse reçue") + f" | verdict : {verdict}.")
                     except PreprocessingError as error:
                         progress(f"[ERROR IA] UID {uid_text} : {error}")
