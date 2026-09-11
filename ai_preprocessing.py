@@ -94,7 +94,7 @@ def classify(engine, key, metadata):
             raise ValueError()
         return Classification(result["verdict"], usage)
     except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
-        error = PreprocessingError("Analyse IA indisponible ou réponse invalide. Aucun déplacement pour ce message ; synchronisation suspendue.")
+        error = PreprocessingError("Analyse IA indisponible ou réponse invalide. Aucun déplacement pour ce message.")
         error.usage = usage
         raise error from None
 
@@ -105,8 +105,50 @@ def checked(result):
     return result[1]
 
 
+
+def quote_mailbox(name):
+    if any(ord(char) < 32 or ord(char) == 127 for char in name):
+        raise PreprocessingError("Nom de dossier IMAP invalide.")
+    return '"' + name.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def inbox_folders(entries):
+    """Parse LIST wire names (including literals); never decode modified UTF-7."""
+    rows = []
+    for entry in entries:
+        if entry is None or entry == b'':
+            continue
+        raw = entry[0] if isinstance(entry, tuple) else entry
+        match = re.fullmatch(rb'\(([^)]*)\) (NIL|"(?:[^"\\]|\\.)*") (.+)', raw)
+        if not match:
+            raise PreprocessingError("Liste des dossiers IMAP illisible.")
+        def unquote(value):
+            if value.startswith(b'"') and value.endswith(b'"'):
+                value = re.sub(rb'\\(.)', rb'\1', value[1:-1])
+            return value.decode('ascii')
+        name = entry[1].decode('ascii') if isinstance(entry, tuple) else unquote(match[3])
+        delimiter = None if match[2] == b'NIL' else unquote(match[2])
+        rows.append((name, delimiter, b'\\NOSELECT' in match[1].upper().split()))
+    root = next((row for row in rows if row[0].upper() == 'INBOX'), None)
+    if root is None:
+        raise PreprocessingError("INBOX absent de la liste des dossiers source.")
+    delimiter = root[1]
+    excluded = {'sent', 'trash', 'junk', 'drafts', 'archive', 'spam', '_01-arnaques', '_02-blacklist'}
+    folders = []
+    for name, _, noselect in rows:
+        if noselect:
+            continue
+        if name.upper() == 'INBOX':
+            folders.append(name)
+        elif delimiter and name.upper().startswith('INBOX' + delimiter):
+            parts = name[len('INBOX' + delimiter):].split(delimiter)
+            if not any(part.casefold() in excluded for part in parts):
+                folders.append(name)
+    return sorted(set(folders), key=lambda name: (name.upper() != 'INBOX', name)), delimiter
+
+
 async def preprocess(account, token, key, active, read_state, save_state, progress):
-    identity = (account["host1"].lower(), account["user1"], account.get("source_folder", "INBOX"))
+    identity = (account["host1"].lower(), account["user1"])
     lock = _locks.setdefault(identity, asyncio.Lock())
     async with lock:
         return await _preprocess(account, token, key, active, read_state, save_state, progress)
@@ -141,123 +183,126 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
         else:
             checked(await call(client.login, account["user1"], account["pass1"]))
         folder = account.get("source_folder", "INBOX")
-        checked(await call(client.select, '"' + folder + '"'))
         if not account.get("bPretraitementIA", False):
+            checked(await call(client.select, quote_mailbox(folder)))
             progress("Vérification de la source réussie (connexion et accès au dossier).")
             return
         caps = checked(await call(client.capability))
         if b"UIDPLUS" not in b" ".join(caps).upper().split():
             raise PreprocessingError("Le serveur source doit prendre en charge UIDPLUS pour déplacer les messages sans supprimer d’autres emails.")
-        validity = client.response("UIDVALIDITY")[1][0]
-        if not validity or not validity.isdigit():
-            raise PreprocessingError("UIDVALIDITY absent : suivi des messages impossible.")
-        identity = hashlib.sha256(json.dumps([account["owner"], account["host1"], account["user1"], folder, validity.decode()]).encode()).hexdigest()
-        state = read_state(identity)
-        if any(value in ("copying", "copied") for value in state.values()):
-            raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
-        # Resolve the actual hierarchy delimiter instead of assuming a slash.
-        listing = checked(await call(client.list, '""', '"' + folder + '"'))
-        delimiter = re.search(rb'\) "([^"\\])" ', listing[0] or b"") if listing else None
+        folders, delimiter = inbox_folders(checked(await call(client.list, '""', '"*"')))
         if not delimiter:
             raise PreprocessingError("Le serveur ne fournit pas de séparateur de sous-dossiers utilisable.")
-        ai_quarantine = folder + delimiter[1].decode("ascii") + "_01-Arnaques"
-        lists = account.get("sender_lists", {})
-        cutoff = datetime.now(timezone.utc) - timedelta(days=account.get("nPeriodeJours", 5))
-        months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
-        search_day = cutoff - timedelta(days=1)  # SINCE ignores the server timezone; filter precisely below.
-        since = f"{search_day.day:02d}-{months[search_day.month-1]}-{search_day.year}"
-        uids = checked(await call(client.uid, "SEARCH", None, "UNSEEN", "UNDELETED", "SINCE", since))[0].split()
-        progress(f"Prétraitement IA : {len(uids)} messages candidats dans la période.")
-        for uid in uids:
+        for folder in folders:
             stopped()
-            uid_text = uid.decode("ascii")
-            previous = state.get(uid_text)
-            if previous == "done":
-                continue
-            if previous in ("copying", "copied"):
+            selected = checked(await call(client.select, quote_mailbox(folder)))
+            total = int(selected[0])
+            validity = client.response("UIDVALIDITY")[1][0]
+            if not validity or not validity.isdigit():
+                raise PreprocessingError("UIDVALIDITY absent : suivi des messages impossible.")
+            identity = hashlib.sha256(json.dumps([account["owner"], account["host1"], account["user1"], folder, validity.decode()]).encode()).hexdigest()
+            state = read_state(identity)
+            if any(value in ("copying", "copied") for value in state.values()):
                 raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
-            metadata = checked(await call(client.uid, "FETCH", uid, "(FLAGS INTERNALDATE RFC822.SIZE)"))
-            info = b" ".join(item for item in metadata if isinstance(item, bytes))
-            size = re.search(rb"RFC822.SIZE (\d+)", info)
-            date_match = re.search(rb'INTERNALDATE "([^"]+)"', info)
-            if not size or not date_match or b"\\Seen" in info or b"\\Deleted" in info:
-                continue
-            arrived = parsedate_to_datetime(date_match[1].decode().replace("-", " ", 2))
-            if arrived < cutoff:
-                continue
-            rule = None
-            if lists.get("whitelist") or lists.get("blacklist"):
-                headers = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])"))
-                header = next((item[1] for item in headers if isinstance(item, tuple)), None)
-                if header is not None:
-                    rule = sender_decision(sender_address(header), lists)
-            if rule == "whitelist":
+            ai_quarantine = "INBOX" + delimiter + "_01-Arnaques"
+            lists = account.get("sender_lists", {})
+            cutoff = datetime.now(timezone.utc) - timedelta(days=account.get("nPeriodeJours", 5))
+            months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+            search_day = cutoff - timedelta(days=1)  # SINCE ignores the server timezone; filter precisely below.
+            since = f"{search_day.day:02d}-{months[search_day.month-1]}-{search_day.year}"
+            uids = checked(await call(client.uid, "SEARCH", None, "UNSEEN", "UNDELETED", "SINCE", since))[0].split()
+            unread = checked(await call(client.uid, "SEARCH", None, "UNSEEN", "UNDELETED"))[0].split()
+            scan = {"folder": folder, "total": total, "unread": len(unread), "candidates": len(uids),
+                    "already_done": sum(state.get(uid.decode("ascii")) == "done" for uid in uids), "too_old": 0}
+            progress({"folder_scan": dict(scan)})
+            for uid in uids:
                 stopped()
+                uid_text = uid.decode("ascii")
+                previous = state.get(uid_text)
+                if previous == "done":
+                    continue
+                if previous in ("copying", "copied"):
+                    raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
+                metadata = checked(await call(client.uid, "FETCH", uid, "(FLAGS INTERNALDATE RFC822.SIZE)"))
+                info = b" ".join(item for item in metadata if isinstance(item, bytes))
+                size = re.search(rb"RFC822.SIZE (\d+)", info)
+                date_match = re.search(rb'INTERNALDATE "([^"]+)"', info)
+                if not size or not date_match or b"\\Seen" in info or b"\\Deleted" in info:
+                    continue
+                arrived = parsedate_to_datetime(date_match[1].decode().replace("-", " ", 2))
+                if arrived < cutoff:
+                    scan["too_old"] += 1
+                    progress({"folder_scan": dict(scan)})
+                    continue
+                rule = None
+                if lists.get("whitelist") or lists.get("blacklist"):
+                    headers = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])"))
+                    header = next((item[1] for item in headers if isinstance(item, tuple)), None)
+                    if header is not None:
+                        rule = sender_decision(sender_address(header), lists)
+                if rule == "whitelist":
+                    stopped()
+                    state[uid_text] = "done"
+                    save_state(identity, state)
+                    progress({"whitelisted": True})
+                    progress(f"UID {uid_text} : WhiteList — accepté sans IA.")
+                    continue
+                quarantine = ai_quarantine
+                if rule == "blacklist":
+                    verdict = "blacklist"
+                    quarantine = "INBOX" + delimiter + "_02-BlackList"
+                    progress({"blacklisted": True})
+                else:
+                    if not key:
+                        raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
+                    if int(size[1]) > MAX_MESSAGE:
+                        raise PreprocessingError("Message trop volumineux pour l’analyse IA (limite 2 Mio). Source inchangée.")
+                    raw = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[])"))
+                    content = next((item[1] for item in raw if isinstance(item, tuple)), None)
+                    if content is None:
+                        continue
+                    try:
+                        verdict = await call(classify, account["sMoteurIA"], key, compact_message(content))
+                    except PreprocessingError as error:
+                        progress({"usage": getattr(error, "usage", {})})
+                        raise
+                    progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
+                stopped()
+                if verdict in ("spam", "scam", "blacklist"):
+                    # Recheck flags after the API call: the user may have read the mail.
+                    flags = checked(await call(client.uid, "FETCH", uid, "(FLAGS)"))
+                    if any(b"\\Seen" in item or b"\\Deleted" in item for item in flags if isinstance(item, bytes)):
+                        continue
+                    exists = checked(await call(client.list, '""', quote_mailbox(quarantine)))
+                    if not exists or exists == [None]:
+                        checked(await call(client.create, quote_mailbox(quarantine)))
+                    state[uid_text] = "copying"
+                    save_state(identity, state)
+                    # IMAP COPY preserves flags and INTERNALDATE (RFC 3501 §6.4.7).
+                    checked(await call(client.uid, "COPY", uid, quote_mailbox(quarantine)))
+                    state[uid_text] = "copied"
+                    save_state(identity, state)
+                    copy_uid = client.response("COPYUID")[1]
+                    mapping = re.fullmatch(rb"(\d+) (\d+) (\d+)", copy_uid[0] or b"") if copy_uid else None
+                    if not mapping or mapping[2] != uid:
+                        raise PreprocessingError("Copie effectuée mais non vérifiable : original conservé, contrôle manuel nécessaire.")
+                    checked(await call(client.select, quote_mailbox(quarantine)))
+                    target_validity = client.response("UIDVALIDITY")[1][0]
+                    copied = checked(await call(client.uid, "FETCH", mapping[3], "(INTERNALDATE)"))
+                    target_info = b" ".join(item for item in copied if isinstance(item, bytes))
+                    target_date = re.search(rb'INTERNALDATE "([^"]+)"', target_info)
+                    if target_validity != mapping[1] or not target_date or parsedate_to_datetime(target_date[1].decode().replace("-", " ", 2)) != arrived:
+                        raise PreprocessingError("Date d’arrivée de la copie non confirmée : original conservé, contrôle manuel nécessaire.")
+                    checked(await call(client.select, quote_mailbox(folder)))
+                    if client.response("UIDVALIDITY")[1][0] != validity:
+                        raise PreprocessingError("Le dossier source a changé pendant la copie : original conservé.")
+                    stopped()
+                    checked(await call(client.uid, "STORE", uid, "+FLAGS.SILENT", "(\\Deleted)"))
+                    checked(await call(client.uid, "EXPUNGE", uid))
+                    progress({"blacklist_moved": True} if rule == "blacklist" else {"quarantined": True})
                 state[uid_text] = "done"
                 save_state(identity, state)
-                progress({"whitelisted": True})
-                progress(f"UID {uid_text} : WhiteList — accepté sans IA.")
-                continue
-            quarantine = ai_quarantine
-            if rule == "blacklist":
-                verdict = "blacklist"
-                inbox_listing = checked(await call(client.list, '""', '"INBOX"'))
-                inbox_delimiter = re.search(rb'\) "([^"\\])" ', inbox_listing[0] or b"") if inbox_listing else None
-                if not inbox_delimiter:
-                    raise PreprocessingError("Impossible de déterminer le sous-dossier INBOX/_02-BlackList.")
-                quarantine = "INBOX" + inbox_delimiter[1].decode("ascii") + "_02-BlackList"
-                progress({"blacklisted": True})
-            else:
-                if not key:
-                    raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
-                if int(size[1]) > MAX_MESSAGE:
-                    raise PreprocessingError("Message trop volumineux pour l’analyse IA (limite 2 Mio). Source inchangée ; synchronisation suspendue.")
-                raw = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[])"))
-                content = next((item[1] for item in raw if isinstance(item, tuple)), None)
-                if content is None:
-                    continue
-                try:
-                    verdict = await call(classify, account["sMoteurIA"], key, compact_message(content))
-                except PreprocessingError as error:
-                    progress({"usage": getattr(error, "usage", {})})
-                    raise
-                progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
-            stopped()
-            if verdict in ("spam", "scam", "blacklist"):
-                # Recheck flags after the API call: the user may have read the mail.
-                flags = checked(await call(client.uid, "FETCH", uid, "(FLAGS)"))
-                if any(b"\\Seen" in item or b"\\Deleted" in item for item in flags if isinstance(item, bytes)):
-                    continue
-                exists = checked(await call(client.list, '""', '"' + quarantine + '"'))
-                if not exists or exists == [None]:
-                    checked(await call(client.create, '"' + quarantine + '"'))
-                state[uid_text] = "copying"
-                save_state(identity, state)
-                # IMAP COPY preserves flags and INTERNALDATE (RFC 3501 §6.4.7).
-                checked(await call(client.uid, "COPY", uid, '"' + quarantine + '"'))
-                state[uid_text] = "copied"
-                save_state(identity, state)
-                copy_uid = client.response("COPYUID")[1]
-                mapping = re.fullmatch(rb"(\d+) (\d+) (\d+)", copy_uid[0] or b"") if copy_uid else None
-                if not mapping or mapping[2] != uid:
-                    raise PreprocessingError("Copie effectuée mais non vérifiable : original conservé, contrôle manuel nécessaire.")
-                checked(await call(client.select, '"' + quarantine + '"'))
-                target_validity = client.response("UIDVALIDITY")[1][0]
-                copied = checked(await call(client.uid, "FETCH", mapping[3], "(INTERNALDATE)"))
-                target_info = b" ".join(item for item in copied if isinstance(item, bytes))
-                target_date = re.search(rb'INTERNALDATE "([^"]+)"', target_info)
-                if target_validity != mapping[1] or not target_date or parsedate_to_datetime(target_date[1].decode().replace("-", " ", 2)) != arrived:
-                    raise PreprocessingError("Date d’arrivée de la copie non confirmée : original conservé, contrôle manuel nécessaire.")
-                checked(await call(client.select, '"' + folder + '"'))
-                if client.response("UIDVALIDITY")[1][0] != validity:
-                    raise PreprocessingError("Le dossier source a changé pendant la copie : original conservé.")
-                stopped()
-                checked(await call(client.uid, "STORE", uid, "+FLAGS.SILENT", "(\\Deleted)"))
-                checked(await call(client.uid, "EXPUNGE", uid))
-                progress({"blacklist_moved": True} if rule == "blacklist" else {"quarantined": True})
-            state[uid_text] = "done"
-            save_state(identity, state)
-            progress(f"UID {uid_text} : {verdict}" + (f" — déplacé dans {quarantine}." if verdict in ("spam", "scam", "blacklist") else " — conservé."))
+                progress(f"UID {uid_text} : {verdict}" + (f" — déplacé dans {quarantine}." if verdict in ("spam", "scam", "blacklist") else " — conservé."))
         progress("Prétraitement IA terminé.")
     except (imaplib.IMAP4.error, OSError, ValueError, TypeError, IndexError):
         raise PreprocessingError("Échec de connexion ou d’opération IMAP pendant la vérification de la source.") from None

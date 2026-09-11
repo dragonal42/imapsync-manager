@@ -818,12 +818,13 @@ async def execute(account, actor):
     status = "Erreur"
     debug = bool(config.get("log_debug", False))
     metrics = RunMetrics(account)
+    warnings = []
     note = ""
     output = bytearray()
     truncated = False
     private_values = [str(account.get(prefix + side, "")) for prefix in ("pass", "refresh", "token") for side in ("1", "2")]
     def log_snapshot(current_status, complete=True):
-        summary = metrics.summary(current_status, note)
+        summary = metrics.summary(current_status, "\n".join(warnings + ([note] if note else [])))
         details = clean_log(output, private_values, truncated, complete=complete)
         return (details + "\n\n" if debug and details else "") + summary
 
@@ -832,6 +833,10 @@ async def execute(account, actor):
         cmd = ["imapsync", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
                "--pidfile", str(Path(execution_dir.name) / "imapsync.pid")]
         cmd += account.get("options", [])
+        if not account_id.startswith("manual-") and not any(flag in cmd for flag in ("--automap", "--noautomap")):
+            cmd.append("--automap")
+        if "--justfoldersizes" not in cmd:
+            cmd += ["--nofoldersizes", "--nofoldersizesatend"]
         sync = account.get("bActiverSynchro", True)
         if sync and account.get("delete1") == "on" and "--delete1" not in cmd:
             cmd.append("--delete1")
@@ -873,8 +878,14 @@ async def execute(account, actor):
                 save_config(latest)
             owner = next((u for u in load_config()["users"] if u["email"] == account["owner"]), {})
             account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
-            await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
-                             active, read_state, save_state, progress)
+            try:
+                await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
+                                 active, read_state, save_state, progress)
+            except Exception as error:
+                if not sync or active["cancelled"]:
+                    raise
+                message = str(error) if isinstance(error, PreprocessingError) else "Erreur inattendue pendant le prétraitement IA."
+                warnings.append("Avertissement IA : " + message + " Transfert imapsync maintenu ; contrôle IA incomplet.")
             if sync and account.get("bPretraitementIA"):
                 cmd += ["--exclude", "_01-Arnaques", "--exclude", "_02-BlackList"]
                 # A long preprocessing phase must not launch imapsync with expired credentials.
@@ -908,6 +919,8 @@ async def execute(account, actor):
             metrics.feed(b"", final=True)
             metrics.data["returncode"] = process.returncode
             status = "Annulée" if active["cancelled"] else ("Succès" if process.returncode == 0 else "Erreur")
+            if status == "Succès" and warnings:
+                status = "Succès avec avertissement"
             if status == "Erreur":
                 note = "Échec imapsync. Activez le niveau Debug pour détailler une prochaine exécution."
     except asyncio.CancelledError:
@@ -933,14 +946,14 @@ async def execute(account, actor):
         finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
         for current in config["runs"]:
             if current["id"] == run["id"]:
-                current.update(status=status, finished=finished, log=run["log"], metrics=copy.deepcopy(metrics.data), log_debug=debug)
+                current.update(status=status, finished=finished, warnings=warnings, log=run["log"], metrics=copy.deepcopy(metrics.data), log_debug=debug)
         for current in config["accounts"]:
             if str(current["id"]) == account_id:
                 current.update(status=status, last_run=finished)
         save_config(config)
-        if status == "Erreur":
+        if status == "Erreur" or warnings:
             with CONFIG_FILE.with_name("daily_errors.log").open("a", encoding="utf-8") as report:
-                for line in metrics.summary(status, note).splitlines():
+                for line in metrics.summary(status, "\n".join(warnings + ([note] if note else []))).splitlines():
                     report.write(f"[{finished}] [{account['owner']}] [{actor['pseudo']}] Tâche {account_id} : {line}\n")
         if account_id.startswith("manual-"):
             audit("MANUAL_SYNC_FINISHED", actor, level="ERROR" if status == "Erreur" else "INFO",

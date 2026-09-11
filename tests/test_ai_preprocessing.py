@@ -164,17 +164,31 @@ def test_source_only_execute_never_starts_imapsync(env, monkeypatch):
     assert [a['id'] for a in client('alice@example.com').get('/api/task-status').json()['accounts']] == ['a']
 
 
-def test_preprocessing_failure_blocks_sync(env, monkeypatch):
+@pytest.mark.parametrize('debug', [False, True])
+@pytest.mark.parametrize('returncode', [0, 64])
+def test_preprocessing_failure_keeps_sync_and_reports_warning(env, monkeypatch, debug, returncode):
+    config = main.load_config()
+    config['log_debug'] = debug
+    main.save_config(config)
     account = copy.deepcopy(main.load_config()['accounts'][0])
     account.update(bPretraitementIA=True, sMoteurIA='Mistral')
     monkeypatch.setattr(main, 'preprocess', AsyncMock(side_effect=ai.PreprocessingError('Analyse indisponible')))
-    process = AsyncMock(side_effect=AssertionError('must not launch'))
+    completed = type('Process', (), {'returncode': returncode, 'wait': AsyncMock(),
+                     'stdout': type('Output', (), {'read': AsyncMock(side_effect=[b'Messages transferred : 2\n', b''])})()})()
+    process = AsyncMock(return_value=completed)
     monkeypatch.setattr(main.asyncio, 'create_subprocess_exec', process)
     main.processes['a'] = {'cancelled': False, 'process': None}
     asyncio.run(main.execute(account, {'pseudo': 'Alice'}))
-    assert process.await_count == 0
+    assert process.await_count == 1
     run = main.load_config()['runs'][-1]
-    assert run['status'] == 'Erreur' and 'Analyse indisponible' in run['log']
+    assert run['status'] == ('Succès avec avertissement' if returncode == 0 else 'Erreur')
+    assert 'Analyse indisponible' in run['log'] and 'Emails transférés par imapsync : 2' in run['log']
+    assert run['warnings'] and 'Analyse indisponible' in main.CONFIG_FILE.with_name('daily_errors.log').read_text(encoding='utf-8')
+    assert client('alice@example.com').get('/api/logs/' + run['id']).json()['finished'] is True
+    args = process.call_args.args
+    assert '--automap' in args
+    assert '--nofoldersizes' in args and '--nofoldersizesatend' in args
+    assert 'INBOX.spam' not in args and 'INBOX.Sent' not in args
 
 
 def test_delete1_once_and_successful_info_messages(env, monkeypatch):
