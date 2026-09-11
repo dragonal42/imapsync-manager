@@ -14,6 +14,7 @@ from html import unescape
 
 import requests
 from run_logging import Classification, token_usage
+from sender_rules import sender_address, sender_decision
 
 
 class PreprocessingError(Exception):
@@ -144,8 +145,6 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
         if not account.get("bPretraitementIA", False):
             progress("Vérification de la source réussie (connexion et accès au dossier).")
             return
-        if not key:
-            raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
         caps = checked(await call(client.capability))
         if b"UIDPLUS" not in b" ".join(caps).upper().split():
             raise PreprocessingError("Le serveur source doit prendre en charge UIDPLUS pour déplacer les messages sans supprimer d’autres emails.")
@@ -155,13 +154,14 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
         identity = hashlib.sha256(json.dumps([account["owner"], account["host1"], account["user1"], folder, validity.decode()]).encode()).hexdigest()
         state = read_state(identity)
         if any(value in ("copying", "copied") for value in state.values()):
-            raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source et _01-Arnaques avant de réinitialiser le suivi IA.")
+            raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
         # Resolve the actual hierarchy delimiter instead of assuming a slash.
         listing = checked(await call(client.list, '""', '"' + folder + '"'))
         delimiter = re.search(rb'\) "([^"\\])" ', listing[0] or b"") if listing else None
         if not delimiter:
             raise PreprocessingError("Le serveur ne fournit pas de séparateur de sous-dossiers utilisable.")
-        quarantine = folder + delimiter[1].decode("ascii") + "_01-Arnaques"
+        ai_quarantine = folder + delimiter[1].decode("ascii") + "_01-Arnaques"
+        lists = account.get("sender_lists", {})
         cutoff = datetime.now(timezone.utc) - timedelta(days=account.get("nPeriodeJours", 5))
         months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
         search_day = cutoff - timedelta(days=1)  # SINCE ignores the server timezone; filter precisely below.
@@ -175,7 +175,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
             if previous == "done":
                 continue
             if previous in ("copying", "copied"):
-                raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source et _01-Arnaques avant de réinitialiser le suivi IA.")
+                raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
             metadata = checked(await call(client.uid, "FETCH", uid, "(FLAGS INTERNALDATE RFC822.SIZE)"))
             info = b" ".join(item for item in metadata if isinstance(item, bytes))
             size = re.search(rb"RFC822.SIZE (\d+)", info)
@@ -185,20 +185,45 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
             arrived = parsedate_to_datetime(date_match[1].decode().replace("-", " ", 2))
             if arrived < cutoff:
                 continue
-            if int(size[1]) > MAX_MESSAGE:
-                raise PreprocessingError("Message trop volumineux pour l’analyse IA (limite 2 Mio). Source inchangée ; synchronisation suspendue.")
-            raw = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[])") )
-            content = next((item[1] for item in raw if isinstance(item, tuple)), None)
-            if content is None:
+            rule = None
+            if lists.get("whitelist") or lists.get("blacklist"):
+                headers = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])"))
+                header = next((item[1] for item in headers if isinstance(item, tuple)), None)
+                if header is not None:
+                    rule = sender_decision(sender_address(header), lists)
+            if rule == "whitelist":
+                stopped()
+                state[uid_text] = "done"
+                save_state(identity, state)
+                progress({"whitelisted": True})
+                progress(f"UID {uid_text} : WhiteList — accepté sans IA.")
                 continue
-            try:
-                verdict = await call(classify, account["sMoteurIA"], key, compact_message(content))
-            except PreprocessingError as error:
-                progress({"usage": getattr(error, "usage", {})})
-                raise
-            progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
+            quarantine = ai_quarantine
+            if rule == "blacklist":
+                verdict = "blacklist"
+                inbox_listing = checked(await call(client.list, '""', '"INBOX"'))
+                inbox_delimiter = re.search(rb'\) "([^"\\])" ', inbox_listing[0] or b"") if inbox_listing else None
+                if not inbox_delimiter:
+                    raise PreprocessingError("Impossible de déterminer le sous-dossier INBOX/_02-BlackList.")
+                quarantine = "INBOX" + inbox_delimiter[1].decode("ascii") + "_02-BlackList"
+                progress({"blacklisted": True})
+            else:
+                if not key:
+                    raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
+                if int(size[1]) > MAX_MESSAGE:
+                    raise PreprocessingError("Message trop volumineux pour l’analyse IA (limite 2 Mio). Source inchangée ; synchronisation suspendue.")
+                raw = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[])"))
+                content = next((item[1] for item in raw if isinstance(item, tuple)), None)
+                if content is None:
+                    continue
+                try:
+                    verdict = await call(classify, account["sMoteurIA"], key, compact_message(content))
+                except PreprocessingError as error:
+                    progress({"usage": getattr(error, "usage", {})})
+                    raise
+                progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
             stopped()
-            if verdict in ("spam", "scam"):
+            if verdict in ("spam", "scam", "blacklist"):
                 # Recheck flags after the API call: the user may have read the mail.
                 flags = checked(await call(client.uid, "FETCH", uid, "(FLAGS)"))
                 if any(b"\\Seen" in item or b"\\Deleted" in item for item in flags if isinstance(item, bytes)):
@@ -229,10 +254,10 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                 stopped()
                 checked(await call(client.uid, "STORE", uid, "+FLAGS.SILENT", "(\\Deleted)"))
                 checked(await call(client.uid, "EXPUNGE", uid))
-                progress({"quarantined": True})
+                progress({"blacklist_moved": True} if rule == "blacklist" else {"quarantined": True})
             state[uid_text] = "done"
             save_state(identity, state)
-            progress(f"UID {uid_text} : {verdict}" + (" — déplacé dans _01-Arnaques." if verdict in ("spam", "scam") else " — conservé."))
+            progress(f"UID {uid_text} : {verdict}" + (f" — déplacé dans {quarantine}." if verdict in ("spam", "scam", "blacklist") else " — conservé."))
         progress("Prétraitement IA terminé.")
     except (imaplib.IMAP4.error, OSError, ValueError, TypeError, IndexError):
         raise PreprocessingError("Échec de connexion ou d’opération IMAP pendant la vérification de la source.") from None

@@ -165,3 +165,42 @@ docker compose logs --no-log-prefix imapsync-manager | grep -F '[CONFIG_DELETED]
 ```
 
 Ces traces relèvent de la conservation des logs Docker configurée sur l’hôte ; la purge applicative des historiques à 90 jours ne supprime pas les logs Docker. Reconstruire l’image après fusion pour inclure `audit_logging.py`.
+
+
+### Listes d’expéditeurs par utilisateur
+
+Le menu **Mes listes d’expéditeurs** ouvre `/sender-lists`. Chaque utilisateur (administrateur compris) gère ses propres WhiteList et BlackList. Lorsqu’un administrateur lance une configuration d’un autre utilisateur, les listes du propriétaire de la configuration sont utilisées, jamais celles de l’administrateur.
+
+L’import accepte des adresses seules séparées par `;`, `|`, `,`, TAB ou retour à la ligne. Elles sont normalisées en minuscules, dédupliquées et validées côté serveur. SweetAlert présente la liste exacte, le nombre d’ajouts et les adresses déjà présentes avant confirmation. Une adresse déjà dans l’autre liste bloque l’import : il faut d’abord la retirer de cette autre liste. Limites : 1000 adresses distinctes par import et 10000 par liste. La suppression d’une adresse est immédiate, sans confirmation. La recherche « contient » filtre les deux listes sans distinction de majuscules.
+
+Les règles s’appliquent au prétraitement IA activé, dans la période configurée et uniquement aux messages non lus, non supprimés et non encore traités. Les listes sont prises au début du prétraitement et stockées dans l’entrée `users` du propriétaire, sous `sender_lists.whitelist` et `sender_lists.blacklist` dans `config.json`. Un changement de liste ne relance pas l’analyse des UID déjà traités.
+
+- WhiteList : l’adresse exacte de l’en-tête From est acceptée immédiatement, sans lire le corps ni appeler l’IA. Le message reste non lu et peut être synchronisé normalement.
+- BlackList : déplacement sans IA vers le sous-dossier `_02-BlackList` d’INBOX (par exemple `INBOX._02-BlackList` sur Dovecot), quelle que soit la source vérifiée. Le déplacement conserve la vérification COPYUID/INTERNALDATE et la suppression ciblée de l’original. Le corps n’est pas chargé, y compris pour les messages dépassant la limite d’analyse IA de 2 Mio.
+- Hors listes, ou From ambigu/malformé : parcours IA habituel. Un nom d’affichage ne suffit jamais pour reconnaître une adresse autorisée.
+
+Une adresse From peut être usurpée : une WhiteList est une décision explicite d’accepter cet expéditeur sans analyse IA, pas une preuve d’authenticité. Si une ancienne configuration de listes contient malgré tout une adresse dans les deux listes, la BlackList est prioritaire. Les deux dossiers de quarantaine sont exclus de l’étape imapsync lorsque le prétraitement est activé. En cas de copie interrompue, vérifier également INBOX/_02-BlackList avant de corriger une entrée du suivi `ai_state.json`.
+
+Le résumé affiche désormais :
+
+```text
+Emails analysés par IA Mistral : 0 | Nb frauduleux/spams détectés : 0 | Nb déplacés : 0
+```
+
+Sans appel IA, les lignes de consommation/coût sont omises. Les traitements WhiteList/BlackList ont leurs propres compteurs et ne sont pas comptés comme analyses IA. Si une tentative IA échoue après avoir consommé des tokens, la consommation connue reste visible pour ne pas masquer cet usage.
+
+### Adresse IP dans les traces Docker, derrière Caddy
+
+Chaque événement d’audit comprend l’IP client, par exemple `[LOGIN_SUCCESS] [198.51.100.23] pseudo="Alice" | email="alice@example.com"`. IPv4 et IPv6 sont prises en charge. Le contexte IP accompagne aussi l’envoi SMTP et la fin des tâches manuelles lancées en arrière-plan. Les en-têtes réseau bruts ne sont pas écrits dans le journal.
+
+Pour recevoir l’IP publique transmise par Caddy, renseigner **FORWARDED_ALLOW_IPS dans `.env` avec l’IP interne exacte du conteneur Caddy**, puis recréer l’application. Exemple de repérage (le réseau du compose est `proxy-net`) :
+
+```bash
+docker network inspect proxy-net --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{println}}{{end}}'
+```
+
+Utiliser l’adresse du conteneur Caddy sans son suffixe de masque, pas l’adresse publique du visiteur. Plusieurs IP ou un CIDR de proxies réellement de confiance peuvent être séparés par une virgule. La valeur par défaut est `127.0.0.1`, adaptée uniquement à un proxy local de confiance. Pour Caddy dans un autre conteneur, cette valeur doit être adaptée ; sinon le journal montrera l’adresse de Caddy, pas celle du visiteur. Si l’adresse de Caddy change, mettre ce réglage à jour.
+
+Uvicorn n’accepte X-Forwarded-For que depuis les proxies déclarés. Ne pas mettre `*` lorsque le port de l’application est joignable directement : un client pourrait alors choisir l’IP inscrite dans les logs. Si un CDN est placé devant Caddy, ses proxies doivent aussi être configurés correctement dans Caddy. Une IP ne peut pas être déduite au-delà de ce que fournit la chaîne de proxies. Les adresses absentes ou invalides sont indiquées `inconnue`, jamais remplacées par une IP supposée.
+
+Après fusion : `git pull` puis `docker compose up -d --build imapsync-manager`. Aucune modification de la configuration Caddy de production n’est effectuée par le code du dépôt.

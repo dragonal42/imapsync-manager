@@ -15,4 +15,4 @@ cron
 
 # One worker owns the JSON transactions and scheduler. Query strings contain
 # one-time credentials; do not include them in HTTP access logs.
-exec uvicorn main:app --host 0.0.0.0 --port 8080 --workers 1 --no-access-log
+exec uvicorn main:app --host 0.0.0.0 --port 8080 --workers 1 --no-access-log --proxy-headers

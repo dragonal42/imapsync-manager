@@ -22,7 +22,8 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from ai_preprocessing import preprocess, PreprocessingError
 from run_logging import RunMetrics
-from audit_logging import audit
+from audit_logging import audit, client_ip, normalized_ip
+from sender_rules import KINDS, parse_import
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -192,6 +193,16 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.middleware("http")
+async def audit_ip_context(request, call_next):
+    # Uvicorn resolves forwarding only from FORWARDED_ALLOW_IPS trusted proxies.
+    context = client_ip.set(normalized_ip(request.client.host if request.client else ""))
+    try:
+        return await call_next(request)
+    finally:
+        client_ip.reset(context)
+
+
+@app.middleware("http")
 async def access_control(request, call_next):
     request.state.user = user_for(request)
     path = request.url.path
@@ -289,7 +300,7 @@ async def request_link(request: Request):
     email = str(form.get("email", "")).strip().lower()
     data = auth_data()
     key = digest(email)
-    ip_key = "ip:" + digest(request.client.host if request.client else "unknown")
+    ip_key = "ip:" + digest(client_ip.get())
     limited = False
     for limit_key, maximum in ((key, 3), (ip_key, 30)):
         limit = data["limits"].setdefault(limit_key, {"count": 0, "expires": time.time() + 900})
@@ -376,6 +387,63 @@ async def task_status(request: Request):
     config = load_config()
     return {"accounts": [{"id": str(a["id"]), "status": a.get("status", ""), "last_run": display_time(a.get("last_run", ""))}
                          for a in config["accounts"] if visible(request.state.user, a)]}
+
+
+@app.get("/sender-lists")
+async def sender_lists_page(request: Request, q: str = ""):
+    user = request.state.user
+    lists = user.get("sender_lists", {})
+    query = q.strip().lower()[:254]
+    return render(request, "sender_lists.html", q=query,
+                  sender_lists={kind: sorted(email for email in lists.get(kind, []) if query in email) for kind in KINDS},
+                  totals={kind: len(lists.get(kind, [])) for kind in KINDS})
+
+
+@app.post("/sender-lists/preview")
+@app.post("/sender-lists/import")
+async def import_sender_lists(request: Request):
+    form = await request.form()
+    kind = str(form.get("kind", ""))
+    if kind not in KINDS:
+        raise HTTPException(400, "Choisissez WhiteList ou BlackList")
+    try:
+        emails = parse_import(str(form.get("emails", "")))
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    config = load_config()
+    user = next(u for u in config["users"] if u["email"] == request.state.user["email"])
+    lists = user.setdefault("sender_lists", {"whitelist": [], "blacklist": []})
+    opposite = "blacklist" if kind == "whitelist" else "whitelist"
+    conflicts = sorted(set(emails) & set(lists.get(opposite, [])))
+    if conflicts:
+        raise HTTPException(409, "Retirez d’abord ces adresses de l’autre liste : " + ", ".join(conflicts[:10]))
+    existing = set(lists.get(kind, []))
+    merged = existing | set(emails)
+    if len(merged) > 10000:
+        raise HTTPException(400, "Limite de 10000 adresses par liste atteinte")
+    added = len(merged) - len(existing)
+    if request.url.path.endswith("/import"):
+        lists[kind] = sorted(merged)
+        save_config(config)
+        audit("SENDER_LIST_IMPORTED", request.state.user, kind=kind, added=added)
+    return {"emails": emails, "added": added, "existing": len(emails) - added}
+
+
+@app.post("/sender-lists/delete")
+async def delete_sender_address(request: Request):
+    form = await request.form()
+    kind, email = str(form.get("kind", "")), str(form.get("email", "")).strip().lower()
+    if kind not in KINDS:
+        raise HTTPException(400, "Liste invalide")
+    config = load_config()
+    user = next(u for u in config["users"] if u["email"] == request.state.user["email"])
+    values = user.get("sender_lists", {}).get(kind, [])
+    removed = email in values
+    if removed:
+        values.remove(email)
+        save_config(config)
+        audit("SENDER_LIST_DELETED", request.state.user, kind=kind, sender=email)
+    return {"removed": removed}
 
 
 @app.get("/admin")
@@ -481,7 +549,7 @@ async def save_account(request: Request, account_id: str = ""):
     if ai and not config.get("sApiKey" + engine):
         raise HTTPException(400, "Clé API IA absente : contactez l’administrateur")
     folder = str(form.get("source_folder", account.get("source_folder", "INBOX"))).strip()
-    if not folder or len(folder) > 255 or any(ord(c) < 32 or ord(c) > 126 or c in '\\"*%' for c in folder) or "_01-Arnaques" in folder:
+    if not folder or len(folder) > 255 or any(ord(c) < 32 or ord(c) > 126 or c in '\\"*%' for c in folder) or any(name in folder for name in ("_01-Arnaques", "_02-BlackList")):
         raise HTTPException(400, "Dossier source invalide (nom IMAP ASCII, hors quarantaine)")
     account.update(bActiverSynchro=sync, bPretraitementIA=ai, nPeriodeJours=days, sMoteurIA=engine, source_folder=folder)
     for key in (("label", "host1", "user1", "host2", "user2") if sync else ("label", "host1", "user1")):
@@ -803,10 +871,12 @@ async def execute(account, actor):
                     if current["id"] == run["id"]:
                         current.update(log=run["log"], metrics=copy.deepcopy(metrics.data), log_debug=debug)
                 save_config(latest)
+            owner = next((u for u in load_config()["users"] if u["email"] == account["owner"]), {})
+            account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
             await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
                              active, read_state, save_state, progress)
             if sync and account.get("bPretraitementIA"):
-                cmd += ["--exclude", "_01-Arnaques"]
+                cmd += ["--exclude", "_01-Arnaques", "--exclude", "_02-BlackList"]
                 # A long preprocessing phase must not launch imapsync with expired credentials.
                 if time.monotonic() - auth_started >= 60 and not active["cancelled"]:
                     for side in ("1", "2"):
