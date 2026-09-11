@@ -106,3 +106,5 @@ input:disabled{background:#e5e7eb;color:#6b7280;cursor:not-allowed}.oauth:disabl
 fieldset {min-width:0; margin:0; padding:1.25rem; border:1px solid #d8dee9; border-radius:12px; background:white} fieldset legend {font-size:1.3rem; font-weight:bold} fieldset:disabled {opacity:.45} .sync-toggle {grid-column:1 / -1} #side1, #side2 {grid-column:1 / -1} [hidden] {display:none !important}
 
 .check-label {display:flex; align-items:center; gap:.65rem} .check-label input[type="checkbox"] {display:inline-block; width:1.1rem; height:1.1rem; margin:0; flex:none} form > .save-button {margin-top:1rem}
+
+.sender-addresses {list-style:none; padding:0} .sender-addresses li {display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.5rem 0; border-bottom:1px solid #e2e8f0} .sender-addresses span {overflow-wrap:anywhere; min-width:0} .sender-addresses button {flex-shrink:0} #sender-import textarea {width:100%; box-sizing:border-box; font:inherit; padding:.7rem; border:1px solid #b9c8dd; border-radius:6px}

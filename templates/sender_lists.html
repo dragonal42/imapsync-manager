@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<h1>Mes listes d’expéditeurs</h1>
+<p>Ces règles s’appliquent aux configurations dont vous êtes propriétaire lorsque le prétraitement IA est activé. WhiteList : accepter sans IA. BlackList : déplacer sans IA dans INBOX / _02-BlackList.</p>
+<p class="muted">Adresses From exactes, sans distinction de majuscules. Elles concernent les messages récents, non lus et non encore traités. Une adresse ne peut appartenir qu’à une seule liste. L’adresse From d’un email peut être usurpée : réservez la WhiteList aux expéditeurs que vous souhaitez accepter sans vérification IA.</p>
+<section><h2>Importer des adresses</h2><form id="sender-import" method="post" action="/sender-lists/import">
+<label>Liste de destination<select name="kind"><option value="whitelist">WhiteList — accepter sans IA</option><option value="blacklist">BlackList — déplacer sans IA</option></select></label>
+<label>Adresses email<textarea name="emails" rows="6" maxlength="300000" required aria-describedby="sender-format" placeholder="alice@example.com; bob@example.com"></textarea></label>
+<p id="sender-format">Séparateurs acceptés : point-virgule (;), barre verticale (|), virgule (,), tabulation (TAB) ou retour à la ligne. Adresses seules, sans nom d’affichage. Maximum 1000 adresses par import ; les doublons sont ignorés.</p>
+<button type="submit">Vérifier et importer</button></form></section>
+<form method="get" action="/sender-lists" class="filters"><label>Recherche « contient »<input type="search" name="q" value="{{ q }}" placeholder="exemple.com"></label><button>Rechercher</button><a href="/sender-lists">Effacer la recherche</a></form>
+<div class="grid">{% for kind, title in [('whitelist','WhiteList'),('blacklist','BlackList')] %}
+<section data-sender-list="{{ kind }}"><h2>{{ title }} — <span data-total>{{ totals[kind] }}</span></h2>
+<ul class="sender-addresses">{% for email in sender_lists[kind] %}<li><span>{{ email }}</span><button type="button" class="danger sender-delete" data-kind="{{ kind }}" data-email="{{ email }}" aria-label="Supprimer {{ email }} de {{ title }}">Supprimer</button></li>{% endfor %}</ul>
+<p class="muted" data-empty {% if sender_lists[kind] %}hidden{% endif %}>Aucune adresse correspondant à la recherche.</p></section>{% endfor %}</div>
+<script defer src="/static/sender_lists.js"></script>{% endblock %}

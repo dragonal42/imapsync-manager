@@ -106,6 +106,33 @@ def check():
             cookie = next(c for c in context.cookies() if c["name"] == main.COOKIE)
             assert cookie["secure"] and cookie["httpOnly"]
 
+            page.get_by_role('link', name='Mes listes d’expéditeurs', exact=True).click()
+            page.locator('[name="emails"]').fill('WHITE@example.com; second@example.com|third@example.com, fourth@example.com\tfifth@example.com\nwhite@example.com')
+            page.get_by_role('button', name='Vérifier et importer', exact=True).click()
+            page.locator('.swal2-textarea').wait_for(state='visible')
+            assert page.locator('.swal2-textarea').input_value().splitlines() == ['fifth@example.com', 'fourth@example.com', 'second@example.com', 'third@example.com', 'white@example.com']
+            assert page.locator('.swal2-textarea').get_attribute('readonly') is not None
+            page.get_by_role('button', name='Annuler', exact=True).click()
+            assert not main.load_config()['users'][0].get('sender_lists')
+            page.get_by_role('button', name='Vérifier et importer', exact=True).click()
+            page.get_by_role('button', name='Confirmer l’import', exact=True).click()
+            page.locator('[data-sender-list="whitelist"] li').first.wait_for()
+            assert page.locator('[data-sender-list="whitelist"] li').count() == 5
+            page.locator('[name="kind"]').select_option('blacklist')
+            page.locator('[name="emails"]').fill('blocked@example.com')
+            page.get_by_role('button', name='Vérifier et importer', exact=True).click()
+            page.get_by_role('button', name='Confirmer l’import', exact=True).click()
+            page.locator('[data-sender-list="blacklist"] li').first.wait_for()
+            page.locator('[name="q"]').fill('WHI')
+            page.get_by_role('button', name='Rechercher', exact=True).click()
+            assert page.locator('.sender-addresses li').count() == 1
+            page.get_by_role('button', name='Supprimer white@example.com de WhiteList', exact=True).click()
+            page.wait_for_function("document.querySelectorAll('.sender-addresses li').length === 0")
+            assert page.locator('.swal2-confirm:visible').count() == 0
+            page.set_viewport_size({'width':390, 'height':844})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            page.set_viewport_size({'width':1280, 'height':900})
+
             page.goto(main.PUBLIC_URL + '/account/new')
             for side in ['1', '2']:
                 assert page.locator('#pass' + side).is_enabled()

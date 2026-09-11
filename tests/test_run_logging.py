@@ -38,7 +38,7 @@ def test_usage_missing_is_not_zero_and_no_double_count():
     text = metrics.summary('Succès')
     assert 'total : 130 (partiel : 1/2 appels)' in text
     assert 'sortie : 0' not in text
-    assert '1 frauduleux' in text and '1 déplacés' in text
+    assert 'Nb frauduleux/spams détectés : 1' in text and 'Nb déplacés : 1' in text
 
 
 @pytest.mark.parametrize('engine', ['Mistral', 'Gemini'])
@@ -99,7 +99,7 @@ def test_execution_log_levels_always_include_tokens_and_counts(env, monkeypatch,
     run = main.load_config()['runs'][-1]
     assert run['status'] == 'Succès'
     assert 'Emails transférés par imapsync : 8.' in run['log']
-    assert '1 frauduleux' in run['log'] and 'total : 25' in run['log']
+    assert 'Nb frauduleux/spams détectés : 1' in run['log'] and 'total : 25' in run['log']
     assert ('DETAILED IMAP noise' in run['log']) is debug
     assert 'secret' not in run['log']
     assert run['metrics']['transferred'] == 8

@@ -1,4 +1,6 @@
 """Single-line application audit events on stdout, visible through docker logs."""
+from contextvars import ContextVar
+import ipaddress
 import json
 import logging
 import os
@@ -18,6 +20,14 @@ if not logger.handlers:
 
 SENSITIVE = re.compile(r'pass|token|secret|refresh|api.?key|credential|authorization|cookie|^log$', re.I)
 MASK = '[MASQUÉ]'
+client_ip = ContextVar('audit_client_ip', default='inconnue')
+
+
+def normalized_ip(value):
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return 'inconnue'
 
 
 def redact(value):
@@ -39,4 +49,4 @@ def inline(value):
 def audit(event, user, level='INFO', **details):
     timestamp = datetime.now(ZoneInfo(os.getenv('TZ', 'Europe/Paris'))).isoformat(timespec='seconds')
     identity = f"pseudo={inline(user.get('pseudo', 'Inconnu'))} | email={inline(user.get('email', ''))}"
-    logger.log(getattr(logging, level), f'{timestamp} [{level}] [{event}] {identity} | data={inline(redact(details))}')
+    logger.log(getattr(logging, level), f'{timestamp} [{level}] [{event}] [{client_ip.get()}] {identity} | data={inline(redact(details))}')

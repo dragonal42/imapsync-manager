@@ -34,6 +34,7 @@ class RunMetrics:
                      'ai_enabled': account.get('bPretraitementIA', False),
                      'engine': account.get('sMoteurIA', 'Mistral'), 'transferred': None,
                      'analysed': 0, 'fraudulent': 0, 'quarantined': 0, 'ai_calls': 0,
+                     'whitelisted': 0, 'blacklisted': 0, 'blacklist_moved': 0,
                      'usage': {}, 'usage_reports': {}, 'returncode': None}
         self.pending = b''
 
@@ -48,6 +49,9 @@ class RunMetrics:
             self.data['analysed'] += 1
             if event['verdict'] in {'spam', 'scam'}:
                 self.data['fraudulent'] += 1
+        for key in ('whitelisted', 'blacklisted', 'blacklist_moved'):
+            if event.get(key):
+                self.data[key] += 1
         if event.get('quarantined'):
             self.data['quarantined'] += 1
 
@@ -68,17 +72,20 @@ class RunMetrics:
         else:
             lines.append('Vérification de la source uniquement — sans synchronisation.')
         if d['ai_enabled']:
-            lines.append(f"IA {d['engine']} : {d['analysed']} analysés ; {d['fraudulent']} frauduleux/spams détectés ; {d['quarantined']} déplacés.")
-            labels = {'input': 'entrée', 'output': 'sortie', 'total': 'total', 'cached': 'cache', 'reasoning': 'raisonnement'}
-            values = []
-            for key, label in labels.items():
-                count = d['usage'].get(key)
-                if count is not None:
-                    reports = d['usage_reports'][key]
-                    suffix = f" (partiel : {reports}/{d['ai_calls']} appels)" if reports < d['ai_calls'] else ''
-                    values.append(f'{label} : {count}{suffix}')
-            lines.append(f"Consommation IA en tokens — cumul de cette exécution ({d['ai_calls']} appels) : " + (' ; '.join(values) if values else 'non communiquée') + '.')
-            lines.append('Coût monétaire : non communiqué par le fournisseur (aucune estimation).')
+            lines.append(f"Emails analysés par IA {d['engine']} : {d['analysed']} | Nb frauduleux/spams détectés : {d['fraudulent']} | Nb déplacés : {d['quarantined']}")
+            if d["whitelisted"] or d["blacklisted"]:
+                lines.append(f"Nb acceptés par WhiteList : {d['whitelisted']} | Nb détectés par BlackList : {d['blacklisted']} | Nb déplacés dans _02-BlackList : {d['blacklist_moved']}")
+            if d['analysed'] > 0 or any(d['usage'].values()):
+                labels = {'input': 'entrée', 'output': 'sortie', 'total': 'total', 'cached': 'cache', 'reasoning': 'raisonnement'}
+                values = []
+                for key, label in labels.items():
+                    count = d['usage'].get(key)
+                    if count is not None:
+                        reports = d['usage_reports'][key]
+                        suffix = f" (partiel : {reports}/{d['ai_calls']} appels)" if reports < d['ai_calls'] else ''
+                        values.append(f'{label} : {count}{suffix}')
+                lines.append(f"Consommation IA en tokens — cumul de cette exécution ({d['ai_calls']} appels) : " + (' ; '.join(values) if values else 'non communiquée') + '.')
+                lines.append('Coût monétaire : non communiqué par le fournisseur (aucune estimation).')
         if d['returncode'] is not None:
             lines.append(f"Code de retour imapsync : {d['returncode']}.")
         if note:
