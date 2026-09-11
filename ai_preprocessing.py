@@ -13,6 +13,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 
 import requests
+from run_logging import Classification, token_usage
 
 
 class PreprocessingError(Exception):
@@ -55,6 +56,7 @@ def compact_message(raw):
 
 def classify(engine, key, metadata):
     payload = json.dumps(metadata, ensure_ascii=False)
+    usage = {}
     try:
         if engine == "Mistral":
             response = requests.post("https://api.mistral.ai/v1/chat/completions",
@@ -63,7 +65,9 @@ def classify(engine, key, metadata):
                     "messages": [{"role": "system", "content": PROMPT}, {"role": "user", "content": payload}],
                     "response_format": {"type": "json_object"}, "max_tokens": 128}, timeout=(10, 45))
             response.raise_for_status()
-            choice = response.json()["choices"][0]
+            body = response.json()
+            usage = token_usage(engine, body)
+            choice = body["choices"][0]
             if choice.get("finish_reason") != "stop":
                 raise ValueError()
             answer = choice["message"]["content"]
@@ -76,7 +80,9 @@ def classify(engine, key, metadata):
                     "generationConfig": {"responseFormat": {"text": {"mimeType": "application/json", "schema": SCHEMA}}}},
                 timeout=(10, 45))
             response.raise_for_status()
-            candidate = response.json()["candidates"][0]
+            body = response.json()
+            usage = token_usage(engine, body)
+            candidate = body["candidates"][0]
             if candidate.get("finishReason") != "STOP":
                 raise ValueError()
             answer = "".join(p.get("text", "") for p in candidate["content"]["parts"] if not p.get("thought"))
@@ -85,9 +91,11 @@ def classify(engine, key, metadata):
         result = json.loads(answer)
         if not isinstance(result, dict) or set(result) != {"verdict"} or result["verdict"] not in SCHEMA["properties"]["verdict"]["enum"]:
             raise ValueError()
-        return result["verdict"]
+        return Classification(result["verdict"], usage)
     except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
-        raise PreprocessingError("Analyse IA indisponible ou réponse invalide. Aucun déplacement pour ce message ; synchronisation suspendue.") from None
+        error = PreprocessingError("Analyse IA indisponible ou réponse invalide. Aucun déplacement pour ce message ; synchronisation suspendue.")
+        error.usage = usage
+        raise error from None
 
 
 def checked(result):
@@ -183,7 +191,12 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
             content = next((item[1] for item in raw if isinstance(item, tuple)), None)
             if content is None:
                 continue
-            verdict = await call(classify, account["sMoteurIA"], key, compact_message(content))
+            try:
+                verdict = await call(classify, account["sMoteurIA"], key, compact_message(content))
+            except PreprocessingError as error:
+                progress({"usage": getattr(error, "usage", {})})
+                raise
+            progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
             stopped()
             if verdict in ("spam", "scam"):
                 # Recheck flags after the API call: the user may have read the mail.
@@ -216,6 +229,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                 stopped()
                 checked(await call(client.uid, "STORE", uid, "+FLAGS.SILENT", "(\\Deleted)"))
                 checked(await call(client.uid, "EXPUNGE", uid))
+                progress({"quarantined": True})
             state[uid_text] = "done"
             save_state(identity, state)
             progress(f"UID {uid_text} : {verdict}" + (" — déplacé dans _01-Arnaques." if verdict in ("spam", "scam") else " — conservé."))

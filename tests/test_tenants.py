@@ -190,6 +190,9 @@ def test_legacy_migration(env):
 
 
 def test_execution_preserves_concurrent_changes_and_redacts(env, monkeypatch):
+    config = main.load_config()
+    config["log_debug"] = True
+    main.save_config(config)
     account = main.load_config()["accounts"][0]
     async def create(*args, **kwargs):
         assert "--nolog" in args and "--delete1" not in args

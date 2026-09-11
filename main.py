@@ -21,6 +21,7 @@ from urllib.parse import urlencode, urlsplit
 
 import requests
 from ai_preprocessing import preprocess, PreprocessingError
+from run_logging import RunMetrics
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -88,6 +89,8 @@ def load_config():
     before = copy.deepcopy(config)
     config.setdefault("users", [])
     config.setdefault("runs", [])
+    config.setdefault("log_debug", False)
+    config.setdefault("log_retention_days", 90)
     for account in config["accounts"]:
         account.setdefault("schedule_state", "RUNNING")
     if ADMIN_EMAIL:
@@ -169,11 +172,13 @@ async def lifespan(app):
     config = load_config()
     for run in config["runs"]:
         if run["status"] == "Synchronisation...":
-            run.update(status="Interrompue", log="Le service a redémarré pendant cette exécution.")
+            run.update(status="Interrompue", log=run.get("log", "") + "\nLe service a redémarré pendant cette exécution.")
     for account in config["accounts"]:
         if account.get("status") == "Synchronisation...":
             account["status"] = "Interrompue"
     save_config(config)
+    rotate_logs()
+    spawn(log_rotation_loop())
     spawn(sync_loop())
     yield
     for task in list(tasks):
@@ -386,6 +391,7 @@ async def create_user(request: Request):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.post("/logs/settings")
 @app.post("/ai/settings")
 @app.post("/settings")
 @app.post("/oauth/settings")
@@ -393,7 +399,15 @@ async def settings(request: Request):
     require_admin(request)
     form = await request.form()
     config = load_config()
-    if request.url.path == "/ai/settings":
+    if request.url.path == "/logs/settings":
+        try:
+            days = int(form.get("log_retention_days", 90))
+            if not 1 <= days <= 3650:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Conservation invalide (1 à 3650 jours)")
+        config.update(log_debug=form.get("log_debug") == "on", log_retention_days=days)
+    elif request.url.path == "/ai/settings":
         for key in ("sApiKeyMistral", "sApiKeyGemini"):
             value = str(form.get(key, "")).strip()
             if len(value) > 4096 or any(ord(c) < 32 for c in value):
@@ -414,6 +428,8 @@ async def settings(request: Request):
         config["oauth_apps"] = {k: str(form.get(k, "")) for k in
                                 ("google_client_id", "google_client_secret", "ms_client_id", "ms_client_secret")}
     save_config(config)
+    if request.url.path == "/logs/settings":
+        rotate_logs()
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -722,9 +738,17 @@ async def execute(account, actor):
             current["status"] = run["status"]
     save_config(config)
     status = "Erreur"
+    debug = bool(config.get("log_debug", False))
+    metrics = RunMetrics(account)
+    note = ""
     output = bytearray()
     truncated = False
     private_values = [str(account.get(prefix + side, "")) for prefix in ("pass", "refresh", "token") for side in ("1", "2")]
+    def log_snapshot(current_status, complete=True):
+        summary = metrics.summary(current_status, note)
+        details = clean_log(output, private_values, truncated, complete=complete)
+        return (details + "\n\n" if debug and details else "") + summary
+
     execution_dir = tempfile.TemporaryDirectory(prefix="imapsync-")
     try:
         cmd = ["imapsync", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
@@ -758,13 +782,16 @@ async def execute(account, actor):
                 data[identity] = state
                 write_json(state_file, data)
             def progress(message):
-                output.extend((message + "\n").encode())
-                del output[:-65536]
-                run["log"] = clean_log(output, private_values)
+                if isinstance(message, dict):
+                    metrics.event(message)
+                else:
+                    output.extend((message + "\n").encode())
+                    del output[:-65536]
+                run["log"] = log_snapshot("Synchronisation...")
                 latest = load_config()
                 for current in latest["runs"]:
                     if current["id"] == run["id"]:
-                        current["log"] = run["log"]
+                        current.update(log=run["log"], metrics=copy.deepcopy(metrics.data), log_debug=debug)
                 save_config(latest)
             await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
                              active, read_state, save_state, progress)
@@ -785,6 +812,7 @@ async def execute(account, actor):
             # Keep a bounded tail; never expose passwords or OAuth tokens in history.
             last_update = 0
             while chunk := await process.stdout.read(8192):
+                metrics.feed(chunk)
                 output.extend(chunk)
                 if len(output) > 65536:
                     truncated = True
@@ -793,16 +821,18 @@ async def execute(account, actor):
                     latest = load_config()
                     for current in latest["runs"]:
                         if current["id"] == run["id"]:
-                            current["log"] = clean_log(output, private_values, truncated, complete=False)
+                            current.update(log=log_snapshot("Synchronisation...", complete=False), metrics=copy.deepcopy(metrics.data), log_debug=debug)
                     save_config(latest)
                     last_update = time.monotonic()
             await process.wait()
+            metrics.feed(b"", final=True)
+            metrics.data["returncode"] = process.returncode
             status = "Annulée" if active["cancelled"] else ("Succès" if process.returncode == 0 else "Erreur")
-            text = clean_log(output, private_values, truncated)
-            run["log"] = text + f"\nCode de retour imapsync : {process.returncode}."
+            if status == "Erreur":
+                note = "Échec imapsync. Activez le niveau Debug pour détailler une prochaine exécution."
     except asyncio.CancelledError:
         status = "Interrompue"
-        run["log"] = clean_log(output, private_values, truncated)
+        note = "Le service a interrompu cette exécution."
         process = active["process"]
         if process and process.returncode is None:
             process.terminate()
@@ -814,22 +844,24 @@ async def execute(account, actor):
         raise
     except PreprocessingError as error:
         status = "Annulée" if active["cancelled"] else "Erreur"
-        run["log"] = clean_log(output, private_values) + "\n" + str(error)
+        note = str(error)
     except Exception:
-        run["log"] = "Échec de connexion, d'authentification ou de lancement. Vérifiez les paramètres IMAP/OAuth."
+        note = "Échec de connexion, d'authentification ou de lancement. Vérifiez les paramètres IMAP/OAuth."
     finally:
+        run["log"] = log_snapshot(status)
         config = load_config()
         finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
         for current in config["runs"]:
             if current["id"] == run["id"]:
-                current.update(status=status, finished=finished, log=run["log"])
+                current.update(status=status, finished=finished, log=run["log"], metrics=copy.deepcopy(metrics.data), log_debug=debug)
         for current in config["accounts"]:
             if str(current["id"]) == account_id:
                 current.update(status=status, last_run=finished)
         save_config(config)
         if status == "Erreur":
             with CONFIG_FILE.with_name("daily_errors.log").open("a", encoding="utf-8") as report:
-                report.write(f"[{finished}] [{account['owner']}] [{actor['pseudo']}] Synchronisation {account_id} en erreur.\n")
+                for line in metrics.summary(status, note).splitlines():
+                    report.write(f"[{finished}] [{account['owner']}] [{actor['pseudo']}] Tâche {account_id} : {line}\n")
         processes.pop(account_id, None)
         execution_dir.cleanup()
 
@@ -865,3 +897,42 @@ async def sync_loop():
                 processes[account_id] = {"owner": account["owner"], "process": None, "cancelled": False}
                 await execute(copy.deepcopy(account), {"pseudo": "Planificateur"})
         await asyncio.sleep(max(1, load_config().get("poll_interval", 5)) * 60)
+
+
+def rotate_logs(now=None):
+    """Age-based rotation of JSON run records; never rotate config.json itself."""
+    now = now or datetime.now(timezone.utc)
+    config = load_config()
+    cutoff = now - timedelta(days=config.get("log_retention_days", 90))
+    active_ids = {item.get("run_id") for item in processes.values()}
+    def keep(run):
+        timestamp = parse_timestamp(run.get("finished") or run.get("started"))
+        return (run.get("status") == "Synchronisation..." or run.get("id") in active_ids
+                or timestamp is None or timestamp >= cutoff)
+    retained = [run for run in config["runs"] if keep(run)]
+    removed = len(config["runs"]) - len(retained)
+    if removed:
+        config["runs"] = retained
+        save_config(config)
+    report = CONFIG_FILE.with_name("daily_errors.log")
+    if report.exists():
+        original = report.read_text(encoding="utf-8")
+        lines = []
+        for line in original.splitlines(keepends=True):
+            match = re.match(r"^\[([^]]+)\]", line)
+            stamp = parse_timestamp(match[1]) if match else None
+            if stamp is None or stamp >= cutoff:
+                lines.append(line)
+        text = "".join(lines)
+        if text != original:
+            report.write_text(text, encoding="utf-8")
+    return removed
+
+
+async def log_rotation_loop():
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            rotate_logs()
+        except Exception:
+            logger.exception("Échec de la purge des journaux ; nouvelle tentative dans une heure")

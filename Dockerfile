@@ -46,7 +46,7 @@ WORKDIR /app
 # Installation des modules Python requis
 RUN pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart requests --break-system-packages
 
-COPY main.py ai_preprocessing.py /app/
+COPY main.py ai_preprocessing.py run_logging.py /app/
 COPY msmtp.conf.template /app/msmtp.conf.template
 COPY templates /app/templates
 COPY static /app/static

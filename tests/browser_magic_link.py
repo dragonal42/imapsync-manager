@@ -25,6 +25,9 @@ def check():
         main.AUTH_FILE = Path(directory) / "auth.json"
         main.PUBLIC_URL = "https://testserver"
         main.ADMIN_EMAIL = "admin@example.com"
+        config = main.load_config()
+        config["log_debug"] = True
+        main.save_config(config)
         deliveries = []
 
         async def deliver(email, token):
@@ -90,6 +93,16 @@ def check():
             assert "Erreurs aujourd’hui" in page.content()
             page.get_by_role("link", name="Administration", exact=True).click()
             assert "Créer un utilisateur" in page.content()
+            page.get_by_role('checkbox', name='Log : Niveau Debug', exact=True).uncheck()
+            page.locator('[name="log_retention_days"]').fill('120')
+            page.get_by_role('button', name='Enregistrer les paramètres des logs', exact=True).click()
+            page.wait_for_function("document.querySelector('[name=log_retention_days]').value === '120'")
+            assert main.load_config()['log_retention_days'] == 120
+            assert main.load_config()['log_debug'] is False
+            page.get_by_role('checkbox', name='Log : Niveau Debug', exact=True).check()
+            page.get_by_role('button', name='Enregistrer les paramètres des logs', exact=True).click()
+            page.wait_for_timeout(500)
+            assert main.load_config()['log_debug'] is True
             cookie = next(c for c in context.cookies() if c["name"] == main.COOKIE)
             assert cookie["secure"] and cookie["httpOnly"]
 
