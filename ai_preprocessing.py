@@ -183,7 +183,7 @@ def classify(engine, key, metadata, model=None):
                 headers={"x-goog-api-key": key}, json={
                     "systemInstruction": {"parts": [{"text": PROMPT}]},
                     "contents": [{"role": "user", "parts": [{"text": payload}]}],
-                    "generationConfig": {"responseFormat": {"text": {"mimeType": "application/json", "schema": SCHEMA}}}},
+                    "generationConfig": {"responseFormat": {"text": {"mimeType": "APPLICATION_JSON", "schema": SCHEMA}}}},
                 timeout=(10, 45))
             response.raise_for_status()
             stage = "décodage JSON de la réponse HTTP"

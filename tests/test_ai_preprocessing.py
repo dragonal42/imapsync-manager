@@ -61,6 +61,11 @@ def test_provider_requests_and_strict_response(monkeypatch, engine):
     assert ai.classify(engine, 'api-secret', {'subject': 'test'}) == 'spam'
     assert 'api-secret' not in calls[0][0]
     assert calls[0][1]['timeout'] == (10, 45)
+    if engine == 'Gemini':
+        # REST TextResponseFormat.MimeType is an enum, not a MIME string.
+        assert calls[0][1]['json']['generationConfig'] == {
+            'responseFormat': {'text': {'mimeType': 'APPLICATION_JSON', 'schema': ai.SCHEMA}}}
+        assert calls[0][0].endswith(':generateContent')
     monkeypatch.setattr(Response, 'json', lambda self: {})
     with pytest.raises(ai.PreprocessingError, match='réponse invalide'):
         ai.classify(engine, 'api-secret', {})
