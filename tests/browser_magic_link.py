@@ -91,6 +91,16 @@ def check():
             page.get_by_role("button", name="Confirmer ma connexion").click()
             page.wait_for_url(main.PUBLIC_URL + "/dashboard")
             assert "Erreurs aujourd’hui" in page.content()
+            for width in (390, 320):
+                page.set_viewport_size({'width': width, 'height': 844})
+                for path in ('/', '/admin', '/dashboard', '/manual', '/account/new', '/sender-lists', '/cgu', '/privacy'):
+                    page.goto(main.PUBLIC_URL + path)
+                    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), (width, path)
+                if width == 390:
+                    page.goto(main.PUBLIC_URL + '/admin')
+                    page.screenshot(path=str(Path(__file__).resolve().parents[2] / 'admin-mobile.png'), full_page=True)
+            page.set_viewport_size({'width': 1280, 'height': 900})
+            page.goto(main.PUBLIC_URL + '/dashboard')
             page.get_by_role("link", name="Administration", exact=True).click()
             assert "Créer un utilisateur" in page.content()
             page.get_by_role('checkbox', name='Log : Niveau Debug', exact=True).uncheck()

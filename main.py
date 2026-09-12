@@ -85,6 +85,23 @@ def write_json(path, data):
             os.unlink(name)
 
 
+def normalize_interval(value):
+    try:
+        return min(10080, max(5, ((int(value) + 4) // 5) * 5))
+    except (TypeError, ValueError):
+        return 5
+
+
+def interval_from_form(value):
+    try:
+        interval = int(value)
+        if not 5 <= interval <= 10080 or interval % 5:
+            raise ValueError()
+        return interval
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Intervalle invalide : multiple de 5 minutes, de 5 à 10080")
+
+
 def load_config():
     config = read_json(CONFIG_FILE, {"accounts": [], "poll_interval": 5,
                                      "report_email": "", "oauth_apps": {}})
@@ -95,8 +112,14 @@ def load_config():
     config.setdefault("log_retention_days", 90)
     config.setdefault("mistral_rps", 1.0)
     config.setdefault("mistral_model", os.getenv("MISTRAL_MODEL", "mistral-small-latest"))
+    config["poll_interval"] = normalize_interval(config.get("poll_interval", 5))
+    config.setdefault("gemini_model", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    for key, value in {"gemini_rps": 0.2, "gemini_rpm": 10, "gemini_rpd": 1500, "gemini_tpm": 20000,
+                       "mistral_rpm": 60, "mistral_rpd": 0, "mistral_tpm": 20000}.items():
+        config.setdefault(key, value)
     for account in config["accounts"]:
         account.setdefault("schedule_state", "RUNNING")
+        account["sync_interval"] = normalize_interval(account.get("sync_interval", config["poll_interval"]))
     if ADMIN_EMAIL:
         admin = next((u for u in config["users"] if u["email"] == ADMIN_EMAIL), None)
         if admin is None:
@@ -242,7 +265,7 @@ async def favicon():
 
 @app.get("/")
 async def home(request: Request):
-    return render(request, "home.html")
+    return render(request, "index.html")
 
 
 @app.get("/cgu")
@@ -486,19 +509,32 @@ async def settings(request: Request):
             raise HTTPException(400, "Conservation invalide (1 à 3650 jours)")
         config.update(log_debug=form.get("log_debug") == "on", log_retention_days=days)
     elif request.url.path == "/ai/settings":
-        if "mistral_rps" in form:
-            try:
-                rate = float(str(form["mistral_rps"]).replace(',', '.'))
-                if not 0.01 <= rate <= 100:
-                    raise ValueError()
-            except (ValueError, TypeError):
-                raise HTTPException(400, "Limite Mistral invalide (0,01 à 100 requêtes/s)")
-            config["mistral_rps"] = rate
-        if "mistral_model" in form:
-            model = str(form["mistral_model"]).strip()
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model):
-                raise HTTPException(400, "Nom de modèle Mistral invalide")
-            config["mistral_model"] = model
+        for provider in ("mistral", "gemini"):
+            rate_key = provider + "_rps"
+            if rate_key in form:
+                try:
+                    rate = float(str(form[rate_key]).replace(',', '.'))
+                    if not 0.01 <= rate <= 100:
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    raise HTTPException(400, "Cadence IA invalide (0,01 à 100 requêtes/s)")
+                config[rate_key] = rate
+            model_key = provider + "_model"
+            if model_key in form:
+                model = str(form[model_key]).strip()
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model):
+                    raise HTTPException(400, "Nom de modèle IA invalide")
+                config[model_key] = model
+            for metric in ("rpm", "rpd", "tpm"):
+                key = provider + "_" + metric
+                if key in form:
+                    try:
+                        number = int(form[key])
+                        if not 0 <= number <= 1000000000:
+                            raise ValueError()
+                    except (TypeError, ValueError):
+                        raise HTTPException(400, "Quota IA invalide (entier positif ou 0 pour désactiver)")
+                    config[key] = number
         for key in ("sApiKeyMistral", "sApiKeyGemini"):
             value = str(form.get(key, "")).strip()
             if len(value) > 4096 or any(ord(c) < 32 for c in value):
@@ -508,12 +544,7 @@ async def settings(request: Request):
             elif value:
                 config[key] = value
     elif request.url.path == "/settings":
-        try:
-            interval = int(form.get("poll_interval", 5))
-            if not 1 <= interval <= 10080:
-                raise ValueError()
-        except ValueError:
-            raise HTTPException(400, "Intervalle invalide")
+        interval = interval_from_form(form.get("poll_interval", 5))
         config.update(poll_interval=interval, report_email=str(form.get("report_email", "")))
     else:
         config["oauth_apps"] = {k: str(form.get(k, "")) for k in
@@ -529,7 +560,7 @@ async def settings(request: Request):
 async def account_form(request: Request, account_id: str = ""):
     config = load_config()
     account = account_for(request, config, account_id) if account_id else {}
-    return render(request, "account.html", account=account,
+    return render(request, "account.html", account=account, default_interval=config["poll_interval"],
                   users=config["users"] if request.state.user["role"] == "admin" else [])
 
 
@@ -549,6 +580,7 @@ async def save_account(request: Request, account_id: str = ""):
     if schedule_state not in {"RUNNING", "PAUSED"}:
         raise HTTPException(400, "État de planification invalide")
     account["schedule_state"] = schedule_state
+    account["sync_interval"] = interval_from_form(form.get("sync_interval", account.get("sync_interval", config["poll_interval"])))
     # A hidden marker distinguishes the new unchecked checkbox from legacy clients.
     sync = form.get("bActiverSynchro") == "on" if form.get("task_options") else account.get("bActiverSynchro", True)
     ai = form.get("bPretraitementIA") == "on"
@@ -848,6 +880,7 @@ async def execute(account, actor):
     for current in config["accounts"]:
         if str(current["id"]) == account_id:
             current["status"] = run["status"]
+            current["last_started"] = run["started"]
     save_config(config)
     status = "Erreur"
     debug = bool(account.get("manual_ai") or config.get("log_debug", False))
@@ -913,8 +946,12 @@ async def execute(account, actor):
             owner = next((u for u in load_config()["users"] if u["email"] == account["owner"]), {})
             account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
             settings = load_config()
-            account["mistral_rps"] = settings["mistral_rps"]
-            account["mistral_model"] = settings["mistral_model"]
+            for provider in ("mistral", "gemini"):
+                for option in ("model", "rps", "rpm", "rpd", "tpm"):
+                    account[provider + "_" + option] = settings[provider + "_" + option]
+            quota_file = CONFIG_FILE.with_name("ai_quotas.json")
+            account["_quota_read"] = lambda: read_json(quota_file, {})
+            account["_quota_save"] = lambda data: write_json(quota_file, data)
             try:
                 await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
                                  active, read_state, save_state, progress)
@@ -1016,20 +1053,27 @@ def clean_log(output, private_values, truncated=False, complete=True):
     return "\n".join(lines)
 
 
+def account_due(account, now=None):
+    if account.get("schedule_state") == "PAUSED":
+        return False
+    now = now or datetime.now(timezone.utc)
+    last = parse_timestamp(account.get("last_started") or account.get("last_run"))
+    return last is None or now >= last + timedelta(minutes=account["sync_interval"])
+
+
+def dispatch_due_accounts(now=None):
+    config = load_config()
+    for account in config["accounts"]:
+        account_id = str(account["id"])
+        if account_due(account, now) and account_id not in processes and any(u["email"] == account.get("owner") for u in config["users"]):
+            processes[account_id] = {"owner": account["owner"], "process": None, "cancelled": False}
+            spawn(execute(copy.deepcopy(account), {"pseudo": "Planificateur"}))
+
+
 async def sync_loop():
-    # Never persist an old snapshot after awaiting a subprocess.
     while True:
-        config = load_config()
-        for previous in config["accounts"]:
-            # Re-read after each execution so deletion/reassignment is respected.
-            account = next((a for a in load_config()["accounts"] if a["id"] == previous["id"]), None)
-            if account is None or account.get("schedule_state") == "PAUSED":
-                continue
-            account_id = str(account["id"])
-            if account_id not in processes and any(u["email"] == account.get("owner") for u in config["users"]):
-                processes[account_id] = {"owner": account["owner"], "process": None, "cancelled": False}
-                await execute(copy.deepcopy(account), {"pseudo": "Planificateur"})
-        await asyncio.sleep(max(1, load_config().get("poll_interval", 5)) * 60)
+        dispatch_due_accounts()
+        await asyncio.sleep(300)
 
 
 def rotate_logs(now=None):
