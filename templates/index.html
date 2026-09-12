@@ -2,10 +2,12 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>IMAPSync Manager</title>
     <link rel="icon" type="image/png" href="/static/Logo_ImapSyncManager_32p.png">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
+   <link rel="stylesheet" href="/static/saas.css">
+   <script>
         function toggleAuth(selectElem, passId, tokenContainerId) {
             if (selectElem.value === 'XOAUTH2') {
                 document.getElementById(passId).style.display = 'none';

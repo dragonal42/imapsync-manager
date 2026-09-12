@@ -108,3 +108,329 @@ fieldset {min-width:0; margin:0; padding:1.25rem; border:1px solid #d8dee9; bord
 .check-label {display:flex; align-items:center; gap:.65rem} .check-label input[type="checkbox"] {display:inline-block; width:1.1rem; height:1.1rem; margin:0; flex:none} form > .save-button {margin-top:1rem}
 
 .sender-addresses {list-style:none; padding:0} .sender-addresses li {display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.5rem 0; border-bottom:1px solid #e2e8f0} .sender-addresses span {overflow-wrap:anywhere; min-width:0} .sender-addresses button {flex-shrink:0} #sender-import textarea {width:100%; box-sizing:border-box; font:inherit; padding:.7rem; border:1px solid #b9c8dd; border-radius:6px}
+
+/* ==========================================================================
+   RESPONSIVE - INDEX / MOBILE
+   ========================================================================== */
+
+/* Évite les débordements horizontaux */
+html,
+body {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+img,
+svg {
+    max-width: 100%;
+}
+
+/* Améliore les interactions tactiles */
+button,
+.button,
+input,
+select {
+    min-height: 44px;
+}
+
+/* Sur iPhone, évite le zoom automatique quand on clique dans un champ */
+@media (max-width: 950px) {
+    input,
+    select {
+        font-size: 16px !important;
+    }
+}
+
+
+/* ==========================================================================
+   TABLETTE / TÉLÉPHONE PAYSAGE
+   ========================================================================== */
+
+@media (max-width: 950px) {
+
+    /* Le p-8 Tailwind est beaucoup trop large sur téléphone */
+    body {
+        padding: 12px !important;
+    }
+
+    /* Conteneur principal */
+    body > .max-w-5xl {
+        width: 100%;
+        max-width: none !important;
+        margin: 0 !important;
+    }
+
+    /* Réduit les espaces verticaux Tailwind */
+    body > .max-w-5xl {
+        gap: 14px;
+    }
+
+    /* Cartes moins volumineuses */
+    body > .max-w-5xl > .bg-white {
+        padding: 18px !important;
+        border-radius: 12px;
+    }
+
+    /* Les cartes paramètres globaux / OAuth */
+    body > .max-w-5xl > .grid.grid-cols-2 {
+        gap: 12px !important;
+    }
+
+    body > .max-w-5xl > .grid.grid-cols-2 > div {
+        padding: 16px !important;
+    }
+
+    /* Formulaire source / destination */
+    form .grid.grid-cols-2 {
+        gap: 12px !important;
+    }
+
+    form .grid.grid-cols-2 > div {
+        padding: 14px !important;
+    }
+
+    h2 {
+        font-size: 1.15rem !important;
+        line-height: 1.3;
+    }
+
+    h3 {
+        font-size: 1rem;
+    }
+
+    button {
+        touch-action: manipulation;
+    }
+}
+
+
+/* ==========================================================================
+   TÉLÉPHONE PORTRAIT
+   ========================================================================== */
+
+@media (max-width: 700px) {
+
+    body {
+        padding:
+            max(8px, env(safe-area-inset-top))
+            max(8px, env(safe-area-inset-right))
+            max(12px, env(safe-area-inset-bottom))
+            max(8px, env(safe-area-inset-left)) !important;
+    }
+
+    /*
+       IMPORTANT :
+       toutes les grilles 2 colonnes passent sur une seule colonne.
+       Cela concerne :
+       - Paramètres globaux / OAuth
+       - Source / Destination
+    */
+    .grid.grid-cols-2 {
+        grid-template-columns: minmax(0, 1fr) !important;
+        gap: 12px !important;
+    }
+
+    /* Cartes principales */
+    body > .max-w-5xl > .bg-white {
+        padding: 14px !important;
+        margin: 0;
+        border-radius: 10px;
+    }
+
+    body > .max-w-5xl > .grid.grid-cols-2 > div {
+        padding: 14px !important;
+    }
+
+    form .grid.grid-cols-2 > div {
+        padding: 12px !important;
+    }
+
+    /* Titres */
+    h2 {
+        font-size: 1.08rem !important;
+        margin-bottom: 12px !important;
+    }
+
+    h3 {
+        margin-top: 0;
+    }
+
+    /* Champs */
+    input,
+    select {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        padding: 11px !important;
+    }
+
+    /* Boutons principaux pleine largeur */
+    form > button[type="submit"] {
+        width: 100%;
+    }
+
+    /*
+       OAuth :
+       Google et Microsoft faciles à toucher
+    */
+    [id^="tok_box"] .flex {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px !important;
+    }
+
+    [id^="tok_box"] button {
+        width: 100%;
+        min-height: 42px;
+        padding: 8px !important;
+    }
+
+
+    /* ======================================================================
+       TABLE DES COMPTES -> CARTES SUR MOBILE
+       ====================================================================== */
+
+    table {
+        display: block;
+        width: 100%;
+    }
+
+    table thead {
+        display: none;
+    }
+
+    table tbody {
+        display: block;
+        width: 100%;
+    }
+
+    table tr {
+        display: block;
+        width: 100%;
+        margin-bottom: 14px;
+        padding: 12px;
+        background: #f8fafc;
+        border: 1px solid #dce5ee;
+        border-radius: 10px;
+    }
+
+    table td {
+        display: grid;
+        grid-template-columns: minmax(90px, 35%) minmax(0, 1fr);
+        align-items: start;
+        gap: 8px;
+        width: 100%;
+        padding: 8px 0 !important;
+        border-bottom: 1px solid #e2e8f0;
+        overflow-wrap: anywhere;
+    }
+
+    table td:last-child {
+        border-bottom: 0;
+    }
+
+    table td::before {
+        font-size: .78rem;
+        font-weight: 700;
+        color: #52667a;
+    }
+
+    table td:nth-child(1)::before {
+        content: "Nom";
+    }
+
+    table td:nth-child(2)::before {
+        content: "Migration";
+    }
+
+    table td:nth-child(3)::before {
+        content: "Dernière exécution";
+    }
+
+    table td:nth-child(4)::before {
+        content: "Statut";
+    }
+
+    table td:nth-child(5)::before {
+        content: "Action";
+    }
+
+    table td form {
+        margin: 0;
+    }
+}
+
+
+/* ==========================================================================
+   TRÈS PETITS TÉLÉPHONES
+   ========================================================================== */
+
+@media (max-width: 390px) {
+
+    body {
+        padding-left: 6px !important;
+        padding-right: 6px !important;
+    }
+
+    body > .max-w-5xl > .bg-white {
+        padding: 12px !important;
+    }
+
+    body > .max-w-5xl > .grid.grid-cols-2 > div,
+    form .grid.grid-cols-2 > div {
+        padding: 10px !important;
+    }
+
+    /* OAuth l'un sous l'autre sur les très petits écrans */
+    [id^="tok_box"] .flex {
+        grid-template-columns: 1fr;
+    }
+
+    table td {
+        grid-template-columns: 1fr;
+        gap: 3px;
+    }
+}
+
+
+/* ==========================================================================
+   TÉLÉPHONE PAYSAGE
+   ========================================================================== */
+
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+
+    body {
+        padding: 8px 14px !important;
+    }
+
+    body > .max-w-5xl {
+        max-width: 900px !important;
+        margin: 0 auto !important;
+    }
+
+    body > .max-w-5xl > .bg-white {
+        padding: 14px !important;
+    }
+
+    /*
+       En paysage on garde Source / Destination côte à côte
+       dès qu'il y a suffisamment de largeur.
+    */
+    form .grid.grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 10px !important;
+    }
+
+    form .grid.grid-cols-2 > div {
+        padding: 10px !important;
+    }
+
+    input,
+    select {
+        margin-bottom: 8px;
+    }
+
+    h2 {
+        margin-bottom: 10px !important;
+    }
+}
