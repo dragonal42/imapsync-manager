@@ -5,6 +5,8 @@ import pytest
 
 import ai_preprocessing as ai
 import main
+import ai_quotas
+from datetime import datetime, timezone
 from test_tenants import env, client
 
 
@@ -13,6 +15,11 @@ def rate_clock(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(ai, '_mistral_next', 0)
     monkeypatch.setattr(ai, '_rate_now', lambda: clock[0])
+    class QuotaDateTime:
+        @staticmethod
+        def now(tz=None):
+            return datetime.fromtimestamp(clock[0], timezone.utc)
+    monkeypatch.setattr(ai_quotas, 'datetime', QuotaDateTime)
     async def sleep(delay):
         clock[0] += delay
         await asyncio.sleep(0)
@@ -26,7 +33,7 @@ def test_shared_rate_across_concurrent_accounts(rate_clock):
         starts.append(rate_clock[0])
         return 'legitimate'
     async def run():
-        await asyncio.gather(*(ai.mistral_call({'mistral_rps': 1}, 'key', {}, {'cancelled': False}, call, lambda _: None) for _ in range(4)))
+        await asyncio.gather(*(ai.provider_call({'mistral_rps': 1}, 'key', {}, {'cancelled': False}, call, lambda _: None) for _ in range(4)))
     asyncio.run(run())
     assert len(starts) == 4 and all(b - a >= 1 for a, b in zip(starts, starts[1:]))
 
@@ -40,7 +47,7 @@ def test_429_retries_bounded_and_cooldown_shared(rate_clock):
         error.retry_after = 60
         raise error
     with pytest.raises(ai.PreprocessingError):
-        asyncio.run(ai.mistral_call({}, 'key', {}, {'cancelled': False}, call, lambda _: None))
+        asyncio.run(ai.provider_call({}, 'key', {}, {'cancelled': False}, call, lambda _: None))
     assert starts == [1000, 1060, 1120]
     assert ai._mistral_next == 1180
 
@@ -51,7 +58,7 @@ def test_cancel_during_rate_wait(rate_clock):
     def progress(_): active['cancelled'] = True
     async def call(*args): raise AssertionError('must not send')
     with pytest.raises(ai.PreprocessingError, match='Arrêt demandé'):
-        asyncio.run(ai.mistral_call({}, 'key', {}, active, call, progress))
+        asyncio.run(ai.provider_call({}, 'key', {}, active, call, progress))
 
 
 def test_retry_after_parsing():
@@ -73,7 +80,7 @@ def test_retry_success_preserves_attempt_usage_and_selected_model(rate_clock):
             error.usage = {'total': 7}
             raise error
         return 'legitimate'
-    result = asyncio.run(ai.mistral_call({'mistral_model': 'mistral-small-2603'}, 'key', {},
+    result = asyncio.run(ai.provider_call({'mistral_model': 'mistral-small-2603'}, 'key', {},
                                         {'cancelled': False}, call, events.append))
     assert result == 'legitimate' and starts == [1000, 1002]
     assert {'usage': {'total': 7}} in events
@@ -87,7 +94,7 @@ def test_non_429_is_not_retried(rate_clock):
         error.http_status = 401
         raise error
     with pytest.raises(ai.PreprocessingError):
-        asyncio.run(ai.mistral_call({}, 'key', {}, {'cancelled': False}, call, lambda _: None))
+        asyncio.run(ai.provider_call({}, 'key', {}, {'cancelled': False}, call, lambda _: None))
     assert len(calls) == 1
 
 

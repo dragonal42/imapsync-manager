@@ -111,7 +111,7 @@ Le rapport quotidien utilise l’adresse de rapport configurée, ou à défaut c
 
 Le suivi des UID et UIDVALIDITY persiste par dossier dans `data/ai_state.json`, indépendamment des journaux. Vider les logs ne relance pas l’analyse des messages déjà traités. Une copie interrompue ou dont la date ne peut être confirmée bloque la reprise automatique du prétraitement pour éviter les copies multiples et une suppression non vérifiée ; le transfert reste autorisé et peut donc supprimer l’original après transfert si `--delete1` est activé. Dans ce cas, mettre la tâche en PAUSED, attendre/arrêter son exécution, vérifier l’original, la destination et sa copie dans `_01-Arnaques`, puis faire corriger par l’administrateur uniquement l’entrée UID concernée dans `ai_state.json` (marquer `done` si le déplacement est confirmé, ou retirer l’entrée uniquement après avoir restauré l’original et retiré la copie ambiguë). Ne pas effacer tout le suivi sans cette vérification.
 
-Les modèles peuvent être remplacés dans `.env` avec `MISTRAL_MODEL` (défaut `mistral-small-latest`) et `GEMINI_MODEL` (défaut `gemini-2.5-flash`). Les appels utilisent les interfaces REST [Mistral Chat](https://docs.mistral.ai/api/endpoint/chat) et [Gemini Generate Content avec sortie structurée](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
+Les modèles sont modifiables dans l’administration pour les deux fournisseurs. Au premier démarrage, les valeurs initiales proviennent de `.env` : `MISTRAL_MODEL` (défaut `mistral-small-latest`) et `GEMINI_MODEL` (défaut `gemini-2.5-flash`). Les valeurs sauvegardées deviennent ensuite prioritaires. Les appels utilisent les interfaces REST [Mistral Chat](https://docs.mistral.ai/api/endpoint/chat) et [Gemini Generate Content avec sortie structurée](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
 
 L’option de suppression après transfert transmet `--delete1` une seule fois. Les messages `Info: turning on --expunge1...` sont informatifs : aucun `--noexpunge1` n’est ajouté. Le code de retour du processus décide du résultat, affiché **OK** pour une réussite ; la page de journal et le tableau de bord actualisent le statut automatiquement. Un journal encore en cours de lecture des dossiers ne constitue pas une preuve de fin du processus.
 
@@ -119,13 +119,29 @@ Après fusion, reconstruire l’image (`docker compose up -d --build imapsync-ma
 
 ## Niveaux de log, consommation IA et conservation
 
-### Modèle Mistral, cadence et reprise après 429
+### Intervalles par configuration
+
+Le réglage global `poll_interval` devient uniquement la valeur par défaut des **nouvelles** configurations. Chaque compte possède `sync_interval`, modifiable en création/édition, par paliers de 5 minutes (5 à 10080). La migration attribue aux configurations existantes l’ancien intervalle global, arrondi au multiple de 5 supérieur. Changer ensuite la valeur globale ne modifie pas ces configurations.
+
+Le planificateur vérifie les échéances au démarrage puis toutes les 300 secondes. L’intervalle se calcule depuis `last_started` (dernier lancement manuel ou automatique), avec reprise de l’ancien `last_run` si nécessaire. Une configuration jamais lancée est due immédiatement. Les tâches dues démarrent indépendamment ; une tâche déjà active ne peut pas être relancée. Aucun rattrapage en rafale après interruption. PAUSED suspend les lancements automatiques et conserve le lancement manuel.
+
+### Modèles, quotas locaux et reprise après 429
+
+L’administration regroupe deux cartes Mistral/Gemini : clé, modèle, RPS, RPM, RPD et TPM. Les valeurs RPM/RPD/TPM peuvent être mises à 0 pour désactiver le contrôle local correspondant. Valeurs initiales de **protection locale**, à adapter au projet réel : Mistral 1 RPS, 60 RPM, 20000 TPM, RPD désactivé ; Gemini 0,2 RPS, 10 RPM, 1500 RPD, 20000 TPM. Ce ne sont pas des promesses de quotas gratuits ni une liste de modèles disponibles. Vérifier les [limites actives dans Google AI Studio](https://ai.google.dev/gemini-api/docs/rate-limits).
+
+La cadence la plus restrictive RPS/RPM est appliquée. Les réservations partagées par fournisseur/modèle sont conservées dans `data/ai_quotas.json` **avant** l’appel, y compris pour les tentatives qui échouent. La fenêtre RPM/TPM est glissante sur 60 secondes. Le jour RPD Gemini change à minuit `America/Los_Angeles` (heure d’été comprise), celui de la limite locale Mistral à minuit UTC. Ces compteurs survivent au redémarrage et à la purge des journaux. Un quota quotidien atteint, ou une requête estimée plus grosse que le TPM autorisé, interrompt l’IA avec une cause explicite ; le transfert reste maintenu s’il est activé.
+
+La réserve TPM est prudente : taille UTF-8 des métadonnées, instructions et schéma ; pour Mistral, ajout des 128 tokens de sortie maximum. Gemini contrôle les tokens d’entrée. La consommation retournée peut augmenter la réserve si elle dépasse l’estimation. Cette estimation n’est pas un comptage exact du tokenizer fournisseur. Les autres applications, groupes de modèles et quotas réels restent hors du contrôle de ce conteneur ; un HTTP 429 est donc toujours possible.
+
+Sur 429, `Retry-After` est prioritaire. Sans cet en-tête, Gemini attend au moins 2, 4 puis 8 secondes (quatre tentatives maximum) ; Mistral conserve 60 secondes et trois tentatives maximum. La cadence et les autres quotas peuvent allonger l’attente. Les attentes restent interrompables et visibles en Debug ; le délai de reprise est partagé et persisté. Les messages restent analysés individuellement pour conserver la correspondance UID/verdict et les contrôles de déplacement.
+
+### Cadence Mistral
 
 Dans **Administration → Prétraitement IA**, régler le nom exact du modèle (par exemple `mistral-small-2603`) et la cadence maximale en requêtes par seconde. La valeur par défaut est **1 requête/s** ; `0.5` impose deux secondes entre départs. Le modèle initial reprend `MISTRAL_MODEL` ou `mistral-small-latest`, puis la valeur enregistrée dans l’administration est prioritaire. Les changements concernent les prochains lancements, manuels ou automatiques.
 
 La cadence est partagée par toutes les tâches et utilisateurs du processus applicatif, y compris après un échec. Sur HTTP 429, le processus partage aussi un délai de reprise : `Retry-After` fourni par Mistral (secondes ou date HTTP), sinon 60 secondes. Maximum trois tentatives au total ; les autres erreurs ne sont pas retentées. L’attente est asynchrone, apparaît en Debug et reste interrompable avec Arrêter. Les consommations connues de chaque tentative sont cumulées.
 
-La limite concerne ce conteneur à un worker ; les appels d’autres conteneurs ou applications partageant l’organisation Mistral ne sont pas coordonnés. La cadence ne garantit pas le respect des limites de tokens par minute/mois : un 429 reste possible et les diagnostics restent conservés.
+Les quotas concernent ce conteneur à un worker ; les appels d’autres conteneurs ou applications partageant l’organisation Mistral ne sont pas coordonnés. Un 429 reste possible et les diagnostics restent conservés.
 
 ### Diagnostic IA manuel
 

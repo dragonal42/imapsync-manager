@@ -15,6 +15,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 
 import requests
+import ai_quotas
 from run_logging import Classification, token_usage
 from sender_rules import sender_address, sender_decision
 
@@ -35,38 +36,68 @@ MAX_MESSAGE = 2 * 1024 * 1024
 _locks = {}
 _rate_lock = threading.Lock()
 _mistral_next = 0.0
+_other_next = {}
 _rate_now = time.monotonic
 _rate_sleep = asyncio.sleep
 
 
-async def mistral_call(account, key, metadata, active, call, progress):
+async def provider_call(account, key, metadata, active, call, progress, engine="Mistral"):
     """One shared dispatch budget and 429 cooldown for this application process."""
     global _mistral_next
-    interval = 1 / float(account.get('mistral_rps', 1))
-    for attempt in range(3):
+    prefix = engine.lower()
+    model = account.get(prefix + '_model') or os.getenv(prefix.upper() + '_MODEL', 'mistral-small-latest' if engine == 'Mistral' else 'gemini-2.5-flash')
+    interval = 1 / float(account.get(prefix + '_rps', 1 if engine == 'Mistral' else .2))
+    rpm = account.get(prefix + '_rpm', 0)
+    if rpm:
+        interval = max(interval, 60 / rpm)
+    attempts = 3 if engine == 'Mistral' else 4
+    for attempt in range(attempts):
         announced = False
         while True:
             if active['cancelled']:
-                raise PreprocessingError('Arrêt demandé pendant l’attente Mistral.')
+                raise PreprocessingError(f'Arrêt demandé pendant l’attente {engine}.')
             with _rate_lock:
-                remaining = _mistral_next - _rate_now()
+                remaining = (_mistral_next if engine == 'Mistral' else _other_next.get(engine, 0)) - _rate_now()
                 if remaining <= 0:
-                    _mistral_next = _rate_now() + interval
+                    if engine == 'Mistral':
+                        _mistral_next = _rate_now() + interval
+                    else:
+                        _other_next[engine] = _rate_now() + interval
                     break
             if not announced:
-                progress('Mistral : attente du créneau partagé ou du délai après HTTP 429.')
+                progress(engine + ' : attente du créneau partagé ou du délai après HTTP 429.')
                 announced = True
             await _rate_sleep(min(remaining, 0.25))
-        progress(f'Mistral : envoi de la tentative {attempt + 1}/3 | limite : {1 / interval:g} requêtes/s.')
+        reservation = None
+        read, save = account.get('_quota_read'), account.get('_quota_save')
+        if read and save:
+            estimate = len((json.dumps(metadata) + PROMPT + json.dumps(SCHEMA)).encode()) + (128 if engine == 'Mistral' else 0)
+            try:
+                reservation = await ai_quotas.reserve(engine, model, account, estimate, active, progress, read, save)
+            except ai_quotas.QuotaExceeded as error:
+                raise PreprocessingError(str(error)) from None
         try:
-            return await call(classify, 'Mistral', key, metadata, account.get('mistral_model'))
+            if active['cancelled']:
+                raise PreprocessingError('Arrêt demandé avant l’envoi IA.')
+            progress(f'{engine} : envoi de la tentative {attempt + 1}/{attempts} | limite : {1 / interval:g} requêtes/s.')
+            result = await call(classify, engine, key, metadata, model)
+            if reservation:
+                ai_quotas.reconcile(reservation, getattr(result, 'usage', {}), engine, read, save)
+            return result
         except PreprocessingError as error:
+            if reservation:
+                ai_quotas.reconcile(reservation, getattr(error, 'usage', {}), engine, read, save)
             if getattr(error, 'http_status', None) != 429:
                 raise
-            delay = getattr(error, 'retry_after', 60)
+            delay = getattr(error, 'retry_after', 60) if engine == 'Mistral' or getattr(error, 'has_retry_after', False) else 2 ** (attempt + 1)
+            if reservation:
+                ai_quotas.defer(reservation, delay, read, save)
             with _rate_lock:
-                _mistral_next = max(_mistral_next, _rate_now() + delay)
-            if attempt == 2:
+                if engine == 'Mistral':
+                    _mistral_next = max(_mistral_next, _rate_now() + delay)
+                else:
+                    _other_next[engine] = max(_other_next.get(engine, 0), _rate_now() + delay)
+            if attempt == attempts - 1:
                 raise
             progress({'usage': getattr(error, 'usage', {})})
             progress(f'[ERROR IA] HTTP 429 : nouvelle tentative après {delay:g} secondes (délai partagé).')
@@ -178,7 +209,7 @@ def classify(engine, key, metadata, model=None):
             if isinstance(answer, list):
                 answer = "".join(part["text"] for part in answer if isinstance(part, dict) and part.get("type") == "text")
         elif engine == "Gemini":
-            model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
             response = requests.post("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
                 headers={"x-goog-api-key": key}, json={
                     "systemInstruction": {"parts": [{"text": PROMPT}]},
@@ -222,6 +253,7 @@ def classify(engine, key, metadata, model=None):
         error.usage = usage
         error.http_status = status
         error.retry_after = retry_delay(response)
+        error.has_retry_after = bool(getattr(response, "headers", {}).get("Retry-After"))
         error.debug = provider_debug(response, key, metadata)
         raise error from None
 
@@ -412,15 +444,16 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                     try:
                         metadata = compact_message(content)
                         engine = account["sMoteurIA"]
-                        model = (account.get("mistral_model") or os.getenv("MISTRAL_MODEL", "mistral-small-latest")) if engine == "Mistral" else os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+                        model = (account.get("mistral_model") or os.getenv("MISTRAL_MODEL", "mistral-small-latest")) if engine == "Mistral" else (account.get("gemini_model") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
                         progress(f"UID {uid_text} : appel {engine} | modèle {model} | taille message : {size[1].decode()} octets | métadonnées : {len(json.dumps(metadata).encode())} octets | en-têtes : {len(metadata['headers'])} | URLs : {len(metadata['urls'])} | sortie JSON" + (" | stream=false | limite de sortie=128" if engine == "Mistral" else ""))
-                        verdict = await mistral_call(account, key, metadata, active, call, progress) if engine == 'Mistral' else await call(classify, engine, key, metadata)
+                        verdict = await provider_call(account, key, metadata, active, call, progress, engine)
                         progress(f"UID {uid_text} : " + getattr(verdict, "diagnostic", "réponse reçue") + f" | verdict : {verdict}.")
                     except PreprocessingError as error:
                         progress(f"[ERROR IA] UID {uid_text} : {error}")
                         for line in getattr(error, "debug", "").splitlines():
                             progress("[ERROR IA DEBUG] " + line)
-                        progress({"usage": getattr(error, "usage", {})})
+                        if hasattr(error, "usage"):
+                            progress({"usage": error.usage})
                         raise
                     progress({"usage": getattr(verdict, "usage", {}), "verdict": str(verdict)})
                 stopped()
