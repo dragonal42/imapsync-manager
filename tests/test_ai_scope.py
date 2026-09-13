@@ -68,7 +68,8 @@ def test_subfolders_processed_with_independent_uid_state(monkeypatch):
         asyncio.run(ai.preprocess(account, '', 'key', {'cancelled': False}, lambda key: states.get(key, {}),
                                  lambda key, state: states.update({key: copy.deepcopy(state)}), progress))
     run()
-    assert mailbox.visited == ['INBOX', 'INBOX.Clients']
+    # Each result reopens its source to verify UIDVALIDITY before applying it.
+    assert mailbox.visited == ['INBOX', 'INBOX', 'INBOX.Clients', 'INBOX.Clients']
     assert len(classify) == 2 and len(states) == 2
     assert all(state == {'1': 'done'} for state in states.values())
     run()

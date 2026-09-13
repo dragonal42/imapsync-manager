@@ -115,7 +115,7 @@ def load_config():
     config["poll_interval"] = normalize_interval(config.get("poll_interval", 5))
     config.setdefault("gemini_model", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
     for key, value in {"gemini_rps": 0.2, "gemini_rpm": 10, "gemini_rpd": 1500, "gemini_tpm": 20000,
-                       "mistral_rpm": 60, "mistral_rpd": 0, "mistral_tpm": 20000}.items():
+                       "mistral_batch_size": 5, "gemini_batch_size": 5, "mistral_rpm": 60, "mistral_rpd": 0, "mistral_tpm": 20000}.items():
         config.setdefault(key, value)
     for account in config["accounts"]:
         account.setdefault("schedule_state", "RUNNING")
@@ -525,6 +525,15 @@ async def settings(request: Request):
                 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model):
                     raise HTTPException(400, "Nom de modèle IA invalide")
                 config[model_key] = model
+            batch_key = provider + "_batch_size"
+            if batch_key in form:
+                try:
+                    batch_size = int(form[batch_key])
+                    if not 1 <= batch_size <= 50:
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    raise HTTPException(400, "Taille de lot IA invalide (1 à 50 emails)")
+                config[batch_key] = batch_size
             for metric in ("rpm", "rpd", "tpm"):
                 key = provider + "_" + metric
                 if key in form:
@@ -947,7 +956,7 @@ async def execute(account, actor):
             account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
             settings = load_config()
             for provider in ("mistral", "gemini"):
-                for option in ("model", "rps", "rpm", "rpd", "tpm"):
+                for option in ("model", "rps", "rpm", "rpd", "tpm", "batch_size"):
                     account[provider + "_" + option] = settings[provider + "_" + option]
             quota_file = CONFIG_FILE.with_name("ai_quotas.json")
             account["_quota_read"] = lambda: read_json(quota_file, {})

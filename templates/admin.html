@@ -12,6 +12,8 @@
 <p class="muted">Laisser vide pour conserver la clé.</p>
 <label>Modèle {{ name }}<input name="{{ provider }}_model" value="{{ config[provider ~ '_model'] }}" maxlength="128" required></label>
 <label>Requêtes par seconde (RPS)<input type="number" name="{{ provider }}_rps" value="{{ config[provider ~ '_rps'] }}" min="0.01" max="100" step="0.01" required></label>
+<label>Emails maximum par lot {{ name }}<input type="number" name="{{ provider }}_batch_size" value="{{ config[provider ~ '_batch_size'] }}" min="1" max="50" step="1" required></label>
+<p class="muted">Global pour toutes les configurations et analyses manuelles. Les lots peuvent diminuer selon le budget de tokens.</p>
 {% for metric, label in [('rpm','Requêtes par minute (RPM)'),('rpd','Requêtes par jour (RPD)'),('tpm','Tokens par minute (TPM)')] %}
 <label>{{ label }}<input type="number" name="{{ provider }}_{{ metric }}" value="{{ config[provider ~ '_' ~ metric] }}" min="0" max="1000000000" step="1" required></label>
 {% endfor %}
