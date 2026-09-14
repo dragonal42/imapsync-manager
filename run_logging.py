@@ -35,10 +35,19 @@ class RunMetrics:
                      'engine': account.get('sMoteurIA', 'Mistral'), 'transferred': None,
                      'analysed': 0, 'fraudulent': 0, 'quarantined': 0, 'ai_calls': 0,
                      'whitelisted': 0, 'blacklisted': 0, 'blacklist_moved': 0,
+                     'rspamd_enabled': account.get('sMoteurIA') == 'Rspamd' or account.get('rspamd_precheck', False),
+                     'rspamd_analysed': 0, 'rspamd_suspect': 0, 'rspamd_moved': 0, 'rspamd_simulation': False,
                      'folders': {}, 'usage': {}, 'usage_reports': {}, 'returncode': None}
         self.pending = b''
 
     def event(self, event):
+        if 'rspamd_simulation' in event:
+            self.data['rspamd_simulation'] = event['rspamd_simulation']
+        if 'rspamd_result' in event:
+            self.data['rspamd_analysed'] += 1
+            self.data['rspamd_suspect'] += int(event['rspamd_result'] == 'rspamd_spam')
+        if event.get('rspamd_moved'):
+            self.data['rspamd_moved'] += 1
         if 'folder_scan' in event:
             scan = event['folder_scan']
             self.data['folders'][scan['folder']] = dict(scan)
@@ -77,7 +86,11 @@ class RunMetrics:
         if d['ai_enabled']:
             for scan in d['folders'].values():
                 lines.append(f"Dossier IA {scan['folder']} | Nb présents : {scan['total']} | Nb non lus non supprimés : {scan['unread']} | Nb candidats SINCE : {scan['candidates']} | Nb déjà traités : {scan['already_done']} | Nb hors période exacte : {scan['too_old']}")
-            lines.append(f"Emails analysés par IA {d['engine']} : {d['analysed']} | Nb frauduleux/spams détectés : {d['fraudulent']} | Nb déplacés : {d['quarantined']}")
+            if d['rspamd_enabled']:
+                lines.append(f"Emails analysés par Rspamd local : {d['rspamd_analysed']} | Nb suspects : {d['rspamd_suspect']} | Nb déplacés dans _03-Suspects : {d['rspamd_moved']} | Simulation : {'oui' if d['rspamd_simulation'] else 'non'}")
+                lines.append('Rspamd local : aucun appel à une API IA, aucun token facturé.')
+            if d['engine'] != 'Rspamd':
+                lines.append(f"Emails analysés par IA {d['engine']} : {d['analysed']} | Nb frauduleux/spams détectés : {d['fraudulent']} | Nb déplacés : {d['quarantined']}")
             if d["whitelisted"] or d["blacklisted"]:
                 lines.append(f"Nb acceptés par WhiteList : {d['whitelisted']} | Nb détectés par BlackList : {d['blacklisted']} | Nb déplacés dans _02-BlackList : {d['blacklist_moved']}")
             if d['analysed'] > 0 or any(d['usage'].values()):
