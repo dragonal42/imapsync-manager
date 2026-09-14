@@ -31,7 +31,7 @@ async function pollManual() {
 async function startManual(aiOnly, sendersOnly = false) {
     if (runButton.disabled) return;
     if (aiOnly) {
-        for (const name of (sendersOnly ? ['host1', 'user1'] : ['host1', 'user1', 'source_folder', 'nPeriodeJours'])) {
+        for (const name of (sendersOnly ? ['host1', 'user1', 'sent_folder', 'sent_limit'] : ['host1', 'user1', 'source_folder', 'nPeriodeJours'])) {
             const field = manualForm.elements[name];
             if (!field.value.trim() || !field.reportValidity()) {
                 await Swal.fire({title: 'Champ requis', text: 'Vérifiez la source, le dossier et la période.', icon: 'error'});

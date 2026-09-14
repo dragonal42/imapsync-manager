@@ -22,6 +22,7 @@ def check():
         async def extract(account, whitelist, active, progress):
             calls.append(account['exclude_whitelist'])
             assert 'host2' not in account
+            assert account['sent_folder'] == 'Sent' and account['sent_limit'] == 500
             progress('Lecture en cours')
             return ['a@example.com', 'b@example.com'], 12
         main.extract_senders = extract
@@ -46,7 +47,7 @@ def check():
             assert not page.locator('#bt-copy-senders').is_visible()
             for excluded in (True, False):
                 page.locator('[name="exclude_whitelist"]').set_checked(excluded)
-                page.get_by_role('button', name='Extraire les expéditeurs', exact=True).click()
+                page.get_by_role('button', name='Extraire les destinataires To', exact=True).click()
                 page.wait_for_function("!document.getElementById('bt-copy-senders').hidden")
                 assert page.locator('#output').inner_text() == 'a@example.com;\nb@example.com'
                 assert '2 adresses uniques' in page.locator('#manual-status').inner_text()

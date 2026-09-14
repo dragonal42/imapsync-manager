@@ -771,7 +771,17 @@ async def manual_sync(request: Request):
         if not account[("token" if mech == "XOAUTH2" else "pass") + side]:
             raise HTTPException(400, "Renseignez les identifiants de la messagerie " + side)
     if sender_export:
-        account.update(label="Extraction des expéditeurs", sender_export=True, bActiverSynchro=False,
+        try:
+            limit = int(form.get("sent_limit", 500))
+            if not 1 <= limit <= 10000:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Nombre de messages invalide (1 à 10000)")
+        folder = str(form.get("sent_folder", "Sent")).strip()
+        if not folder or len(folder) > 255 or not folder.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in folder):
+            raise HTTPException(400, "Dossier Envoyés invalide (nom IMAP ASCII)")
+        account.update(sent_folder=folder, sent_limit=limit)
+        account.update(label="Extraction des destinataires envoyés", sender_export=True, bActiverSynchro=False,
                        exclude_whitelist=form.get("exclude_whitelist") == "on")
     elif ai_only:
         engine = str(form.get("sMoteurIA", "Mistral"))
@@ -807,7 +817,7 @@ async def manual_sync(request: Request):
     processes[account["id"]] = {"owner": account["owner"], "process": None, "cancelled": False, "run_id": run_id}
     audit("MANUAL_SENDERS_REQUESTED" if sender_export else "MANUAL_AI_REQUESTED" if ai_only else "MANUAL_SYNC_REQUESTED", request.state.user, run_id=run_id, configuration=account)
     spawn((execute_sender_export if sender_export else execute)(account, copy.deepcopy(request.state.user)))
-    return {"run_id": run_id, "message": "Extraction des expéditeurs lancée" if sender_export else "Analyse IA manuelle lancée" if ai_only else "Synchronisation manuelle lancée"}
+    return {"run_id": run_id, "message": "Extraction des destinataires lancée" if sender_export else "Analyse IA manuelle lancée" if ai_only else "Synchronisation manuelle lancée"}
 
 
 async def execute_sender_export(account, actor):
