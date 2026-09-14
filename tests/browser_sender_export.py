@@ -38,6 +38,9 @@ def check():
             page = context.new_page()
             page.goto(main.PUBLIC_URL + '/manual')
             page.wait_for_load_state('networkidle')
+            assert page.locator('#manual-senders > h2').inner_text() == 'Extraction des destinataires'
+            assert page.locator('#manual-senders #bt-senders').count() == 1
+            assert page.locator('#manual-senders').evaluate("el => el.parentElement.id === 'manual-form'")
             for width in (320, 390, 1280):
                 page.set_viewport_size({'width': width, 'height': 900})
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
