@@ -780,7 +780,7 @@ async def manual_sync(request: Request):
         folder = str(form.get("sent_folder", "Sent")).strip()
         if not folder or len(folder) > 255 or not folder.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in folder):
             raise HTTPException(400, "Dossier Envoyés invalide (nom IMAP ASCII)")
-        account.update(sent_folder=folder, sent_limit=limit)
+        account.update(sent_folder=folder, sent_limit=limit, sent_auto=form.get("sent_auto") == "on")
         account.update(label="Extraction des destinataires envoyés", sender_export=True, bActiverSynchro=False,
                        exclude_whitelist=form.get("exclude_whitelist") == "on")
     elif ai_only:
@@ -842,7 +842,7 @@ async def execute_sender_export(account, actor):
         persist()
     try:
         addresses, scanned = await extract_senders(account, whitelist, active, progress)
-        run.update(status='Succès', log=';\n'.join(addresses), sender_count=len(addresses), scanned_messages=scanned)
+        run.update(status='Succès', log=';\n'.join(addresses), sender_count=len(addresses), scanned_messages=scanned, resolved_sent_folder=account.get('resolved_sent_folder', account.get('sent_folder')), sent_total_messages=account.get('sent_total_messages'))
     except asyncio.CancelledError:
         run.update(status='Annulée', log='Extraction interrompue par le service.')
         raise
@@ -861,6 +861,7 @@ async def execute_sender_export(account, actor):
 async def poll_run(request: Request, run_id: str):
     run = run_for(request, load_config(), run_id)
     return {"status": run["status"], "log": run["log"], "finished": run["status"] != "Synchronisation...",
+            "scanned_messages": run.get("scanned_messages", 0), "resolved_sent_folder": run.get("resolved_sent_folder", ""), "sent_total_messages": run.get("sent_total_messages"),
             "sender_export": run.get("sender_export", False), "sender_count": run.get("sender_count", 0)}
 
 

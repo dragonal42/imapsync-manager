@@ -148,3 +148,29 @@ def test_imap_exception_contains_stage_and_redacts_credentials(monkeypatch):
         asyncio.run(export.extract_senders({'host1': 'mail', 'user1': 'user', 'pass1': 'secret'},
             set(), {'cancelled': False}, lambda *a: None))
     assert 'Authentication failed' in str(caught.value) and 'secret' not in str(caught.value)
+
+
+@pytest.mark.parametrize('rows,expected', [
+    ([b'() "." "Sent"', b'() "." "INBOX.Sent"'], 'INBOX.Sent'),
+    ([b'(\\Sent) "/" "[Gmail]/Sent Mail"', b'() "/" "Sent"'], '[Gmail]/Sent Mail'),
+    ([b'(\\Sent) "/" "Sent Items"'], 'Sent Items'),
+])
+def test_sent_folder_detection(rows, expected):
+    assert export.sent_mailbox(rows) == expected
+
+
+def test_500_messages_read_in_five_batches(monkeypatch):
+    mailbox = Mailbox()
+    batches = []
+    def uid(command, *args):
+        if command == 'SEARCH': return 'OK', [b' '.join(str(i).encode() for i in range(1, 701))]
+        ids = args[0].split(b',')
+        batches.append(ids)
+        return 'OK', [(b'1', b'To: same@example.com\r\n\r\n') for _ in ids]
+    mailbox.uid = uid
+    monkeypatch.setattr(export.imaplib, 'IMAP4_SSL', lambda *a, **kw: mailbox)
+    account = {'host1':'mail', 'user1':'user', 'pass1':'secret', 'sent_auto':True}
+    addresses, scanned = asyncio.run(export.extract_senders(account, set(), {'cancelled':False}, lambda *a:None))
+    assert len(batches) == 5 and scanned == 500 and addresses == ['same@example.com']
+    assert batches[0][0] == b'700' and batches[-1][-1] == b'201'
+    assert account['resolved_sent_folder'] == 'INBOX.Sent' and account['sent_total_messages'] == 700
