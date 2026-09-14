@@ -27,6 +27,7 @@ services:
 
     networks:
       - proxy-net
+      - antispam-net
 
     labels:
       - "caddy=${CADDY_URL}"
@@ -35,3 +36,7 @@ services:
 networks:
   proxy-net:
     external: true
+
+  antispam-net:
+    external: true
+    name: imapsync-antispam
