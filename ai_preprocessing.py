@@ -18,6 +18,7 @@ import requests
 import ai_quotas
 from run_logging import Classification, token_usage
 from sender_rules import sender_address, sender_decision
+from rspamd_client import scan as scan_rspamd, RspamdError
 
 
 class PreprocessingError(Exception):
@@ -77,6 +78,7 @@ HEADERS = ("from", "reply-to", "return-path", "authentication-results", "receive
            "x-spam-status", "x-spam-flag", "x-spam-score", "received", "date")
 MAX_MESSAGE = 2 * 1024 * 1024
 _locks = {}
+_rspamd_lock = asyncio.Lock()
 _rate_lock = threading.Lock()
 _mistral_next = 0.0
 _other_next = {}
@@ -340,7 +342,7 @@ def inbox_folders(entries, root_name="INBOX"):
     if root is None:
         raise PreprocessingError("Dossier demandé absent de la liste des dossiers source.")
     delimiter = root[1]
-    excluded = {'sent', 'trash', 'junk', 'drafts', 'archive', 'spam', '_01-arnaques', '_02-blacklist'}
+    excluded = {'sent', 'trash', 'junk', 'drafts', 'archive', 'spam', '_01-arnaques', '_02-blacklist', '_03-suspects'}
     folders = []
     for name, _, noselect in rows:
         if noselect:
@@ -400,6 +402,15 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
         progress("IMAP : authentification réussie.")
         manual = account.get("manual_ai", False)
         dry = manual and account.get("ai_dry", True)
+        local_scan = account.get('bPretraitementIA') and (account.get('sMoteurIA') == 'Rspamd' or account.get('rspamd_precheck'))
+        if local_scan:
+            if not account.get('rspamd_enabled'):
+                raise PreprocessingError('Rspamd désactivé globalement : contactez l’administrateur.')
+            dry = dry or account.get('rspamd_simulation', True)
+            progress({'rspamd_simulation': bool(dry)})
+            progress('Rspamd : analyse locale du message complet ; SPF/DMARC non recalculés sans contexte SMTP fiable. Aucun apprentissage demandé.')
+            if dry:
+                progress('Rspamd : simulation de tout le prétraitement, y compris listes et IA éventuelle ; aucun déplacement ni suivi persistant. Le transfert IMAP reste indépendant.')
         folder = account.get("source_folder", "INBOX")
         if not account.get("bPretraitementIA", False):
             checked(await call(client.select, quote_mailbox(folder)))
@@ -409,6 +420,8 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
         if not dry and b"UIDPLUS" not in b" ".join(caps).upper().split():
             raise PreprocessingError("Le serveur source doit prendre en charge UIDPLUS pour déplacer les messages sans supprimer d’autres emails.")
         root = folder if manual else "INBOX"
+        if any(part in root.casefold() for part in ('_01-arnaques', '_02-blacklist', '_03-suspects')):
+            raise PreprocessingError('Les dossiers de quarantaine ne peuvent pas être réanalysés directement.')
         listing = checked(await call(client.list, '""', '"*"'))
         folders, delimiter = inbox_folders(listing, root)
         quarantine_delimiter = inbox_folders(listing)[1] if manual and not dry else delimiter
@@ -444,6 +457,8 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
             async def apply_verdict(uid, arrived, verdict, rule=None):
                 uid_text = uid.decode("ascii")
                 quarantine = "INBOX" + (quarantine_delimiter or "/") + "_02-BlackList" if rule == "blacklist" else ai_quarantine
+                if verdict == 'rspamd_spam':
+                    quarantine = 'INBOX' + (quarantine_delimiter or '/') + '_03-Suspects'
                 stopped()
                 if dry:
                     progress(f"UID {uid_text} : {verdict} — simulation, aucun déplacement ni marquage comme traité.")
@@ -451,7 +466,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                 checked(await call(client.select, quote_mailbox(folder)))
                 if client.response("UIDVALIDITY")[1][0] != validity:
                     raise PreprocessingError("Le dossier source a changé pendant l’analyse : aucun résultat supplémentaire appliqué.")
-                if verdict in ("spam", "scam", "blacklist"):
+                if verdict in ("spam", "scam", "blacklist", "rspamd_spam"):
                     # Recheck flags after the API call: the user may have read the mail.
                     flags = checked(await call(client.uid, "FETCH", uid, "(FLAGS)"))
                     if any(b"\\Seen" in item or b"\\Deleted" in item for item in flags if isinstance(item, bytes)):
@@ -482,10 +497,10 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                     stopped()
                     checked(await call(client.uid, "STORE", uid, "+FLAGS.SILENT", "(\\Deleted)"))
                     checked(await call(client.uid, "EXPUNGE", uid))
-                    progress({"blacklist_moved": True} if rule == "blacklist" else {"quarantined": True})
+                    progress({"blacklist_moved": True} if rule == "blacklist" else ({"rspamd_moved": True} if verdict == 'rspamd_spam' else {"quarantined": True}))
                 state[uid_text] = "done"
                 save_state(identity, state)
-                progress(f"UID {uid_text} : {verdict}" + (f" — déplacé dans {quarantine}." if verdict in ("spam", "scam", "blacklist") else " — conservé."))
+                progress(f"UID {uid_text} : {verdict}" + (f" — déplacé dans {quarantine}." if verdict in ("spam", "scam", "blacklist", "rspamd_spam") else " — conservé."))
 
             engine = account.get("sMoteurIA", "Mistral")
             batch_size = max(1, min(50, int(account.get(engine.lower() + "_batch_size", 1))))
@@ -562,14 +577,33 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                     quarantine = "INBOX" + (quarantine_delimiter or "/") + "_02-BlackList"
                     progress({"blacklisted": True})
                 else:
-                    if not key:
-                        raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
                     if int(size[1]) > MAX_MESSAGE:
                         raise PreprocessingError("Message trop volumineux pour l’analyse IA (limite 2 Mio). Source inchangée.")
                     raw = checked(await call(client.uid, "FETCH", uid, "(BODY.PEEK[])"))
                     content = next((item[1] for item in raw if isinstance(item, tuple)), None)
                     if content is None:
                         continue
+                    if len(content) > MAX_MESSAGE:
+                        raise PreprocessingError('Message trop volumineux pour le prétraitement (limite 2 Mio).')
+                    if local_scan:
+                        progress(f'UID {uid_text} : appel Rspamd local | taille : {len(content)} octets.')
+                        try:
+                            async with _rspamd_lock:
+                                stopped()
+                                local = await call(scan_rspamd, content, account)
+                        except RspamdError as error:
+                            progress(f'[ERROR RSPAMD] UID {uid_text} : {error}')
+                            raise PreprocessingError(str(error)) from None
+                        stopped()
+                        progress({'rspamd_result': local['verdict']})
+                        progress(f"UID {uid_text} : Rspamd | score : {local['score']:g} | seuil bas : {account['rspamd_clean_score']:g} | seuil haut : {account['rspamd_spam_score']:g} | action : {local['action']} | durée : {local['elapsed']:.2f} s.")
+                        progress('Rspamd : motifs (nom=score) : ' + ', '.join(f'{name}={score:g}' for name, score in local['symbols']))
+                        if engine == 'Rspamd' or local['verdict'] != 'uncertain':
+                            await apply_verdict(uid, arrived, local['verdict'])
+                            continue
+                        progress(f'UID {uid_text} : score intermédiaire, analyse {engine} nécessaire.')
+                    if not key:
+                        raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
                     metadata = compact_message(content)
                     record = (uid, arrived, metadata)
                     candidate = envelope(pending + [record])

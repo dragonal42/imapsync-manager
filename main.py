@@ -22,6 +22,7 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from ai_preprocessing import preprocess, PreprocessingError
 from run_logging import RunMetrics
+from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
 from sender_rules import KINDS, parse_import
 from fastapi import FastAPI, HTTPException, Request
@@ -116,6 +117,8 @@ def load_config():
     config.setdefault("gemini_model", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
     for key, value in {"gemini_rps": 0.2, "gemini_rpm": 10, "gemini_rpd": 1500, "gemini_tpm": 20000,
                        "mistral_batch_size": 5, "gemini_batch_size": 5, "mistral_rpm": 60, "mistral_rpd": 0, "mistral_tpm": 20000}.items():
+        config.setdefault(key, value)
+    for key, value in RSPAMD_DEFAULTS.items():
         config.setdefault(key, value)
     for account in config["accounts"]:
         account.setdefault("schedule_state", "RUNNING")
@@ -492,6 +495,7 @@ async def create_user(request: Request):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.post("/rspamd/settings")
 @app.post("/logs/settings")
 @app.post("/ai/settings")
 @app.post("/settings")
@@ -508,6 +512,11 @@ async def settings(request: Request):
         except (ValueError, TypeError):
             raise HTTPException(400, "Conservation invalide (1 à 3650 jours)")
         config.update(log_debug=form.get("log_debug") == "on", log_retention_days=days)
+    elif request.url.path == "/rspamd/settings":
+        try:
+            config.update(rspamd_settings(form))
+        except (ValueError, TypeError) as error:
+            raise HTTPException(400, str(error)) from None
     elif request.url.path == "/ai/settings":
         for provider in ("mistral", "gemini"):
             rate_key = provider + "_rps"
@@ -600,13 +609,16 @@ async def save_account(request: Request, account_id: str = ""):
     except (ValueError, TypeError):
         raise HTTPException(400, "Période IA invalide (1 à 365 jours)")
     engine = str(form.get("sMoteurIA", "Mistral"))
-    if engine not in {"Mistral", "Gemini"}:
+    if engine not in {"Mistral", "Gemini", "Rspamd"}:
         raise HTTPException(400, "Moteur IA invalide")
-    if ai and not config.get("sApiKey" + engine):
+    if ai and (engine == "Rspamd" or form.get("rspamd_precheck") == "on") and not config["rspamd_enabled"]:
+        raise HTTPException(400, "Rspamd doit être activé par un administrateur")
+    if ai and engine != "Rspamd" and not config.get("sApiKey" + engine):
         raise HTTPException(400, "Clé API IA absente : contactez l’administrateur")
     folder = str(form.get("source_folder", account.get("source_folder", "INBOX"))).strip()
-    if not folder or len(folder) > 255 or any(ord(c) < 32 or ord(c) > 126 or c in '\\"*%' for c in folder) or any(name in folder for name in ("_01-Arnaques", "_02-BlackList")):
+    if not folder or len(folder) > 255 or any(ord(c) < 32 or ord(c) > 126 or c in '\\"*%' for c in folder) or any(name in folder for name in ("_01-Arnaques", "_02-BlackList", "_03-Suspects")):
         raise HTTPException(400, "Dossier source invalide (nom IMAP ASCII, hors quarantaine)")
+    account["rspamd_precheck"] = form.get("rspamd_precheck") == "on"
     account.update(bActiverSynchro=sync, bPretraitementIA=ai, nPeriodeJours=days, sMoteurIA=engine, source_folder=folder)
     for key in (("label", "host1", "user1", "host2", "user2") if sync else ("label", "host1", "user1")):
         value = str(form.get(key, "")).strip()
@@ -758,7 +770,7 @@ async def manual_sync(request: Request):
             raise HTTPException(400, "Renseignez les identifiants de la messagerie " + side)
     if ai_only:
         engine = str(form.get("sMoteurIA", "Mistral"))
-        if engine not in {"Mistral", "Gemini"}:
+        if engine not in {"Mistral", "Gemini", "Rspamd"}:
             raise HTTPException(400, "Moteur IA invalide")
         try:
             days = int(form.get("nPeriodeJours", "5"))
@@ -770,6 +782,9 @@ async def manual_sync(request: Request):
         mode = str(form.get("ai_mode", "preview"))
         if mode not in {"preview", "move"}:
             raise HTTPException(400, "Mode IA invalide")
+        if (engine == "Rspamd" or form.get("rspamd_precheck") == "on") and not load_config()["rspamd_enabled"]:
+            raise HTTPException(400, "Rspamd doit être activé par un administrateur")
+        account["rspamd_precheck"] = form.get("rspamd_precheck") == "on"
         account.update(label="Analyse IA manuelle", manual_ai=True, bActiverSynchro=False, bPretraitementIA=True,
                        sMoteurIA=engine, nPeriodeJours=days, source_folder=folder, ai_dry=mode == "preview",
                        ai_recursive=form.get("ai_recursive") == "on", ai_recheck=form.get("ai_recheck") == "on")
@@ -958,6 +973,8 @@ async def execute(account, actor):
             for provider in ("mistral", "gemini"):
                 for option in ("model", "rps", "rpm", "rpd", "tpm", "batch_size"):
                     account[provider + "_" + option] = settings[provider + "_" + option]
+            for option in RSPAMD_DEFAULTS:
+                account[option] = settings[option]
             quota_file = CONFIG_FILE.with_name("ai_quotas.json")
             account["_quota_read"] = lambda: read_json(quota_file, {})
             account["_quota_save"] = lambda data: write_json(quota_file, data)
@@ -968,9 +985,12 @@ async def execute(account, actor):
                 if not sync or active["cancelled"]:
                     raise
                 message = str(error) if isinstance(error, PreprocessingError) else "Erreur inattendue pendant le prétraitement IA."
-                warnings.append("Avertissement IA : " + message + " Transfert imapsync maintenu ; contrôle IA incomplet.")
+                if account.get('sMoteurIA') == 'Rspamd' or account.get('rspamd_precheck'):
+                    warnings.append("Avertissement antispam : " + message + " Transfert imapsync maintenu ; contrôle antispam incomplet.")
+                else:
+                    warnings.append("Avertissement IA : " + message + " Transfert imapsync maintenu ; contrôle IA incomplet.")
             if sync and account.get("bPretraitementIA"):
-                cmd += ["--exclude", "_01-Arnaques", "--exclude", "_02-BlackList"]
+                cmd += ["--exclude", "_01-Arnaques", "--exclude", "_02-BlackList", "--exclude", "_03-Suspects"]
                 # A long preprocessing phase must not launch imapsync with expired credentials.
                 if time.monotonic() - auth_started >= 60 and not active["cancelled"]:
                     for side in ("1", "2"):

@@ -103,6 +103,10 @@ def check():
             page.goto(main.PUBLIC_URL + '/dashboard')
             page.get_by_role("link", name="Administration", exact=True).click()
             assert "Créer un utilisateur" in page.content()
+            page.locator('[name="rspamd_enabled"]').check()
+            page.get_by_role('button', name='Enregistrer Rspamd', exact=True).click()
+            page.wait_for_function("document.querySelector('.swal2-toast') !== null")
+            assert main.load_config()['rspamd_enabled'] and main.load_config()['rspamd_simulation']
             page.get_by_role('checkbox', name='Log : Niveau Debug', exact=True).uncheck()
             page.locator('[name="log_retention_days"]').fill('120')
             page.get_by_role('button', name='Enregistrer les paramètres des logs', exact=True).click()
@@ -236,15 +240,17 @@ def check():
             page.get_by_label('Serveur IMAP destination', exact=True).fill('')
             page.get_by_label('Identifiant destination', exact=True).fill('')
             page.get_by_label('Dossier source à analyser (nom IMAP)', exact=True).fill('INBOX.Test')
+            page.locator('[name="sMoteurIA"]').select_option('Rspamd')
             async def check_ai(*args):
                 assert args[0]['source_folder'] == 'INBOX.Test' and args[0]['ai_dry']
-                args[-1]('Diagnostic IA manuel visible')
-                raise main.PreprocessingError('Mistral | HTTP 401 | clé API invalide')
+                assert args[0]['sMoteurIA'] == 'Rspamd' and args[0]['rspamd_url'] == 'http://rspamd:11333'
+                args[-1]('Diagnostic Rspamd manuel visible')
+                raise main.PreprocessingError('Rspamd | HTTP 500 | service indisponible')
             main.preprocess = check_ai
-            page.get_by_role('button', name='Lancer l’Analyse IA', exact=True).click()
+            page.get_by_role('button', name='Lancer l’analyse', exact=True).click()
             page.wait_for_function("document.getElementById('manual-status').textContent === 'Erreur'")
-            assert 'Diagnostic IA manuel visible' in page.locator('#output').inner_text()
-            assert 'HTTP 401' in page.locator('#output').inner_text()
+            assert 'Diagnostic Rspamd manuel visible' in page.locator('#output').inner_text()
+            assert 'HTTP 500' in page.locator('#output').inner_text()
             assert main.asyncio.create_subprocess_exec.await_count == 1
             page.get_by_role('link', name='Tableau de bord', exact=True).click()
             page.locator('#historique tbody tr').first.get_by_role('button', name='Supprimer', exact=True).click()
