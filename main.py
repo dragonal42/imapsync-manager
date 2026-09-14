@@ -22,6 +22,7 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from ai_preprocessing import preprocess, PreprocessingError
 from run_logging import RunMetrics
+from sender_export import extract_senders
 from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
 from sender_rules import KINDS, parse_import
@@ -752,7 +753,8 @@ async def manual_sync(request: Request):
         raise HTTPException(400, "Utilisez les options proposées ; les arguments libres ne sont pas autorisés")
     if any(p["owner"] == request.state.user["email"] and key.startswith("manual-") for key, p in processes.items()):
         raise HTTPException(409, "Une synchronisation manuelle est déjà en cours dans votre espace")
-    ai_only = form.get("action") == "ai"
+    sender_export = form.get("action") == "senders"
+    ai_only = form.get("action") == "ai" or sender_export
     account = {"id": "manual-" + secrets.token_hex(12), "owner": request.state.user["email"], "label": "Synchronisation manuelle"}
     for key in (("host1", "user1") if ai_only else ("host1", "host2", "user1", "user2")):
         value = str(form.get(key, "")).strip()
@@ -768,7 +770,10 @@ async def manual_sync(request: Request):
         account["token" + side] = str(form.get("oauth2_token" + side, ""))
         if not account[("token" if mech == "XOAUTH2" else "pass") + side]:
             raise HTTPException(400, "Renseignez les identifiants de la messagerie " + side)
-    if ai_only:
+    if sender_export:
+        account.update(label="Extraction des expéditeurs", sender_export=True, bActiverSynchro=False,
+                       exclude_whitelist=form.get("exclude_whitelist") == "on")
+    elif ai_only:
         engine = str(form.get("sMoteurIA", "Mistral"))
         if engine not in {"Mistral", "Gemini", "Rspamd"}:
             raise HTTPException(400, "Moteur IA invalide")
@@ -800,15 +805,53 @@ async def manual_sync(request: Request):
                 account["options"] += ["--" + key, value]
     run_id = secrets.token_hex(12)
     processes[account["id"]] = {"owner": account["owner"], "process": None, "cancelled": False, "run_id": run_id}
-    audit("MANUAL_AI_REQUESTED" if ai_only else "MANUAL_SYNC_REQUESTED", request.state.user, run_id=run_id, configuration=account)
-    spawn(execute(account, copy.deepcopy(request.state.user)))
-    return {"run_id": run_id, "message": "Analyse IA manuelle lancée" if ai_only else "Synchronisation manuelle lancée"}
+    audit("MANUAL_SENDERS_REQUESTED" if sender_export else "MANUAL_AI_REQUESTED" if ai_only else "MANUAL_SYNC_REQUESTED", request.state.user, run_id=run_id, configuration=account)
+    spawn((execute_sender_export if sender_export else execute)(account, copy.deepcopy(request.state.user)))
+    return {"run_id": run_id, "message": "Extraction des expéditeurs lancée" if sender_export else "Analyse IA manuelle lancée" if ai_only else "Synchronisation manuelle lancée"}
+
+
+async def execute_sender_export(account, actor):
+    active = processes[account['id']]
+    config = load_config()
+    owner = next(user for user in config['users'] if user['email'] == account['owner'])
+    whitelist = set(owner.get('sender_lists', {}).get('whitelist', [])) if account['exclude_whitelist'] else set()
+    run = {'id': active['run_id'], 'account_id': account['id'], 'owner': account['owner'],
+           'actor': actor['pseudo'], 'label': account['label'], 'sender_export': True,
+           'started': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+           'status': 'Synchronisation...', 'log': 'Connexion à la source…', 'sender_count': 0}
+    config['runs'].append(run)
+    save_config(config)
+    def persist():
+        latest = load_config()
+        for current in latest['runs']:
+            if current['id'] == run['id']:
+                current.update(run)
+        save_config(latest)
+    def progress(message):
+        run['log'] = message
+        persist()
+    try:
+        addresses, scanned = await extract_senders(account, whitelist, active, progress)
+        run.update(status='Succès', log=';\n'.join(addresses), sender_count=len(addresses), scanned_messages=scanned)
+    except asyncio.CancelledError:
+        run.update(status='Annulée', log='Extraction interrompue par le service.')
+        raise
+    except Exception as error:
+        run.update(status='Annulée' if active['cancelled'] else 'Erreur',
+                   log=str(error) if isinstance(error, PreprocessingError) else 'Extraction impossible : vérifiez les paramètres de la source.')
+    finally:
+        run['finished'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        persist()
+        processes.pop(account['id'], None)
+        audit('MANUAL_SENDERS_FINISHED', actor, level='INFO' if run['status'] == 'Succès' else 'ERROR',
+              run_id=run['id'], status=run['status'], sender_count=run['sender_count'])
 
 
 @app.get("/api/logs/{run_id}")
 async def poll_run(request: Request, run_id: str):
     run = run_for(request, load_config(), run_id)
-    return {"status": run["status"], "log": run["log"], "finished": run["status"] != "Synchronisation..."}
+    return {"status": run["status"], "log": run["log"], "finished": run["status"] != "Synchronisation...",
+            "sender_export": run.get("sender_export", False), "sender_count": run.get("sender_count", 0)}
 
 
 OAUTH_CONFIG = {
