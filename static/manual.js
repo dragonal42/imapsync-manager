@@ -14,7 +14,7 @@ async function pollManual() {
         if (!response.ok || response.redirected) throw new Error('Ce journal est inaccessible. Vérifiez votre connexion.');
         const result = await response.json();
         document.getElementById('output').textContent = result.log;
-        document.getElementById('manual-status').textContent = result.sender_export && result.finished && result.status === 'Succès' ? `Extraction terminée : ${result.sender_count} adresses uniques. Copiez la liste ci-dessous.` : result.status;
+        document.getElementById('manual-status').textContent = result.sender_export && result.finished && result.status === 'Succès' ? `Extraction terminée — dossier ${result.resolved_sent_folder || "Envoyés"} : ${result.scanned_messages} messages examinés${result.sent_total_messages != null ? ` sur ${result.sent_total_messages} présents` : ""} ; ${result.sender_count} adresses uniques après déduplication et filtre liste blanche. Copiez la liste ci-dessous.` : result.status;
         copySendersButton.hidden = !(result.sender_export && result.finished && result.status === 'Succès' && result.sender_count > 0);
         const link = document.getElementById('manual-log');
         link.href = '/logs/' + encodeURIComponent(runId); link.hidden = false;

@@ -15,8 +15,6 @@ def addresses_from_header(raw):
         message = BytesParser(policy=policy.default).parsebytes(raw, headersonly=True)
         result = set()
         for header in message.get_all('To', []):
-            if header.defects:
-                continue
             for address in header.addresses:
                 value = address.addr_spec.lower()
                 if len(value) <= 254 and EMAIL.fullmatch(value):
@@ -24,6 +22,36 @@ def addresses_from_header(raw):
         return result
     except (ValueError, TypeError, AttributeError):
         return set()
+
+
+def sent_mailbox(entries):
+    """Prefer the server's special-use Sent folder; preserve wire UTF-7 names."""
+    names, special = [], []
+    for entry in entries:
+        if not entry:
+            continue
+        raw = entry[0] if isinstance(entry, tuple) else entry
+        match = re.fullmatch(rb'\(([^)]*)\) (NIL|"(?:[^"\\]|\\.)*") (.+)', raw)
+        if not match:
+            raise PreprocessingError('Réponse LIST illisible : choisissez le dossier Envoyés manuellement.')
+        flags = match[1].upper().split()
+        if b'\\NOSELECT' in flags:
+            continue
+        name = entry[1] if isinstance(entry, tuple) else match[3]
+        if not isinstance(entry, tuple) and name.startswith(b'"') and name.endswith(b'"'):
+            name = re.sub(rb'\\(.)', rb'\1', name[1:-1])
+        name = name.decode('ascii')
+        names.append(name)
+        if b'\\SENT' in flags:
+            special.append(name)
+    if len(special) == 1:
+        return special[0]
+    if len(special) > 1:
+        raise PreprocessingError('Plusieurs dossiers Envoyés déclarés : désactivez la détection et choisissez le nom IMAP exact.')
+    for candidate in ('INBOX.Sent', 'Sent', '[Gmail]/Sent Mail', 'Sent Items'):
+        if candidate in names:
+            return candidate
+    raise PreprocessingError('Dossier Envoyés non identifié : désactivez la détection et saisissez le nom IMAP exact.')
 
 
 async def extract_senders(account, whitelist, active, progress):
@@ -72,6 +100,10 @@ async def extract_senders(account, whitelist, active, progress):
         else:
             checked(await call(client.login, account['user1'], account['pass1']))
         folder = account.get('sent_folder', 'Sent')
+        if account.get('sent_auto'):
+            stage = 'Détection du dossier Envoyés (LIST)'
+            folder = sent_mailbox(checked(await call(client.list, '""', '*')))
+        account['resolved_sent_folder'] = folder
         limit = account.get('sent_limit', 500)
         stopped()
         progress(f'Dossier : {folder} | Lecture des {limit} messages les plus récents (ordre UID).')
@@ -82,6 +114,7 @@ async def extract_senders(account, whitelist, active, progress):
         uids = b' '.join(row for row in rows if isinstance(row, bytes)).split()
         if not all(uid.isdigit() for uid in uids):
             raise PreprocessingError('Liste des UID IMAP invalide.')
+        account['sent_total_messages'] = len(set(uids))
         uids = sorted(set(uids), key=int, reverse=True)[:limit]
         for offset in range(0, len(uids), 100):
             stopped()
