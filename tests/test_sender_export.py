@@ -121,3 +121,30 @@ def test_limit_applies_to_newest_messages_not_addresses(monkeypatch):
 def test_limit_validation(env, limit):
     assert client('alice@example.com').post('/cgi-bin/imapsync', data={
         'action': 'senders', 'host1': 'mail', 'user1': 'alice', 'password1': 'secret', 'sent_limit': limit}).status_code == 400
+
+
+@pytest.mark.parametrize('operation,expected', [('select', 'EXAMINE'), ('login', 'Authentification'), ('uid', 'UID SEARCH')])
+def test_imap_refusal_contains_stage_and_server_detail(monkeypatch, operation, expected):
+    mailbox = Mailbox()
+    setattr(mailbox, operation, lambda *a, **kw: ('NO', [b'[NONEXISTENT] Mailbox does not exist secret oauth-token']))
+    monkeypatch.setattr(export.imaplib, 'IMAP4_SSL', lambda *a, **kw: mailbox)
+    with pytest.raises(PreprocessingError) as caught:
+        asyncio.run(export.extract_senders({'host1': 'mail', 'user1': 'user', 'pass1': 'secret',
+            'token1': 'oauth-token'}, set(), {'cancelled': False}, lambda *a: None))
+    message = str(caught.value)
+    assert expected in message and 'IMAP NO' in message and 'NONEXISTENT' in message
+    assert 'secret' not in message and 'oauth-token' not in message
+    assert 'Aucun message modifié' in message
+    if operation == 'select': assert 'Sent' in message and 'nom IMAP exact' in message
+    assert mailbox.calls[-1][0] == 'LOGOUT'
+
+
+def test_imap_exception_contains_stage_and_redacts_credentials(monkeypatch):
+    mailbox = Mailbox()
+    def fail(*args): raise export.imaplib.IMAP4.error('Authentication failed for secret')
+    mailbox.login = fail
+    monkeypatch.setattr(export.imaplib, 'IMAP4_SSL', lambda *a, **kw: mailbox)
+    with pytest.raises(PreprocessingError, match='Authentification source') as caught:
+        asyncio.run(export.extract_senders({'host1': 'mail', 'user1': 'user', 'pass1': 'secret'},
+            set(), {'cancelled': False}, lambda *a: None))
+    assert 'Authentication failed' in str(caught.value) and 'secret' not in str(caught.value)
