@@ -30,7 +30,8 @@ def test_diagnostics_mask_secrets_and_email_metadata():
 @pytest.mark.parametrize('debug', [False, True])
 def test_error_immediately_after_call_and_details_only_debug(env, monkeypatch, debug, rate_clock):
     config = main.load_config()
-    config.update(log_debug=debug, sApiKeyMistral='SECRET')
+    config.update(log_debug=debug)
+    next(u for u in config['users'] if u['email']=='alice@example.com')['ai_settings'] = {'sApiKeyMistral':'SECRET'}
     main.save_config(config)
     mailbox = Mailbox()
     monkeypatch.setattr(ai.imaplib, 'IMAP4_SSL', lambda *a, **kw: mailbox)

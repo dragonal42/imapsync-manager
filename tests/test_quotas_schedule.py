@@ -50,9 +50,9 @@ def test_due_dispatch_no_overlap_and_paused(env, monkeypatch):
 
 def test_gemini_admin_quota_validation(env):
     data = {'gemini_model': 'gemini-2.5-flash-lite', 'gemini_rps': '.2', 'gemini_rpm': '10', 'gemini_rpd': '50', 'gemini_tpm': '20000'}
-    assert client('alice@example.com').post('/ai/settings', data=data).status_code == 403
+    assert client('alice@example.com').post('/ai/settings', data={**data, 'owner':'bob@example.com'}).status_code == 403
     assert client('admin@example.com').post('/ai/settings', data=data).status_code == 303
-    assert main.load_config()['gemini_rpd'] == 50
+    assert main.user_ai_settings(main.load_config(), 'admin@example.com')['gemini_rpd'] == 50
     assert client('admin@example.com').post('/ai/settings', data={'gemini_tpm': '-1'}).status_code == 400
 
 

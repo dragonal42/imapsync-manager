@@ -1,0 +1,21 @@
+{% extends 'base.html' %}{% block content %}<h1>Paramètres IA — {{ target.pseudo }}</h1><p>{{ target.email }} : clés et quotas utilisés uniquement par les tâches de cet utilisateur. La facturation dépend du compte ou projet associé à chaque clé chez le fournisseur.</p><section><h2>Fournisseurs IA et quotas</h2>
+<p>Réglez ces limites locales selon les quotas affichés dans votre console fournisseur. Elles ne changent ni votre forfait ni les limites du fournisseur.</p>
+<form class="action-form" action="/ai/settings" method="post" data-toast="Paramètres IA enregistrés">
+<input type="hidden" name="owner" value="{{ target.email }}"><div class="grid">
+{% for provider, name in [('mistral','Mistral'),('gemini','Gemini')] %}
+<fieldset><legend>{{ name }}</legend>
+<label>Clé API {{ name }} — {{ 'configurée' if ai.get('sApiKey' ~ name) else 'non configurée' }}<input type="password" name="sApiKey{{ name }}" autocomplete="new-password" maxlength="4096"></label>
+<label class="check-label"><input type="checkbox" name="clear_sApiKey{{ name }}"> Effacer la clé {{ name }}</label>
+<p class="muted">Laisser vide pour conserver la clé.</p>
+<label>Modèle {{ name }}<input name="{{ provider }}_model" value="{{ ai[provider ~ '_model'] }}" maxlength="128" required></label>
+<label>Requêtes par seconde (RPS)<input type="number" name="{{ provider }}_rps" value="{{ ai[provider ~ '_rps'] }}" min="0.01" max="100" step="0.01" required></label>
+<label>Emails maximum par lot {{ name }}<input type="number" name="{{ provider }}_batch_size" value="{{ ai[provider ~ '_batch_size'] }}" min="1" max="50" step="1" required></label>
+<p class="muted">Pour toutes les configurations et analyses manuelles de cet utilisateur. Les lots peuvent diminuer selon le budget de tokens.</p>
+{% for metric, label in [('rpm','Requêtes par minute (RPM)'),('rpd','Requêtes par jour (RPD)'),('tpm','Tokens par minute (TPM)')] %}
+<label>{{ label }}<input type="number" name="{{ provider }}_{{ metric }}" value="{{ ai[provider ~ '_' ~ metric] }}" min="0" max="1000000000" step="1" required></label>
+{% endfor %}
+<p class="muted">0 désactive le contrôle local RPM, RPD ou TPM. Journée locale : {{ 'heure du Pacifique' if provider == 'gemini' else 'UTC' }}.</p>
+</fieldset>{% endfor %}</div>
+<p class="muted">Compteurs propres à cet utilisateur, partagés entre ses tâches et conservés après redémarrage. Les tokens sont estimés avant l’appel et contrôlés avec la consommation retournée. Gemini : attente progressive 2, 4, 8 secondes après 429 ; Mistral : 60 secondes. Retry-After est prioritaire. Une limite quotidienne atteinte arrête l’analyse, sans bloquer le transfert configuré.</p>
+<button class="save-button"><span class="save-icon">✓</span> Enregistrer les paramètres IA</button></form></section>
+{% endblock %}

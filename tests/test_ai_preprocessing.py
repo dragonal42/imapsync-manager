@@ -11,11 +11,11 @@ from test_tenants import env, client, form
 
 
 def test_settings_secret_preservation_and_isolation(env):
-    assert client('alice@example.com').post('/ai/settings', data={'sApiKeyMistral': 'secret-ai'}).status_code == 403
+    assert client('alice@example.com').post('/ai/settings', data={'owner':'bob@example.com', 'sApiKeyMistral': 'secret-ai'}).status_code == 403
     admin = client('admin@example.com')
     assert admin.post('/ai/settings', data={'sApiKeyMistral': 'secret-ai', 'sApiKeyGemini': 'secret-gemini'}).status_code == 303
     assert admin.post('/ai/settings', data={'sApiKeyMistral': ''}).status_code == 303
-    assert main.load_config()['sApiKeyMistral'] == 'secret-ai'
+    assert main.user_ai_settings(main.load_config(), 'admin@example.com')['sApiKeyMistral'] == 'secret-ai'
     for browser, path in [(admin, '/admin'), (client('alice@example.com'), '/dashboard')]:
         page = browser.get(path).text
         assert 'secret-ai' not in page and 'secret-gemini' not in page

@@ -66,15 +66,15 @@ def test_batches_validate_before_moves_and_count_once(monkeypatch, rate_clock, e
 def test_global_batch_settings(env):
     admin = client('admin@example.com')
     config = main.load_config()
-    assert config['mistral_batch_size'] == config['gemini_batch_size'] == 5
+    assert main.user_ai_settings(config, 'admin@example.com')['mistral_batch_size'] == main.user_ai_settings(config, 'admin@example.com')['gemini_batch_size'] == 5
     assert admin.post('/ai/settings', data={'mistral_batch_size': '3', 'gemini_batch_size': '8'}).status_code == 303
-    assert main.load_config()['mistral_batch_size'] == 3
-    assert main.load_config()['gemini_batch_size'] == 8
-    assert 'name="mistral_batch_size"' in admin.get('/admin').text
-    assert 'name="gemini_batch_size"' in admin.get('/admin').text
+    assert main.user_ai_settings(main.load_config(), 'admin@example.com')['mistral_batch_size'] == 3
+    assert main.user_ai_settings(main.load_config(), 'admin@example.com')['gemini_batch_size'] == 8
+    assert 'name="mistral_batch_size"' in admin.get('/ai/settings').text
+    assert 'name="gemini_batch_size"' in admin.get('/ai/settings').text
     for value in ('0', '51', '1.5', 'oops'):
         assert admin.post('/ai/settings', data={'mistral_batch_size': value}).status_code == 400
-    assert client('alice@example.com').post('/ai/settings', data={'mistral_batch_size': '4'}).status_code == 403
+    assert client('alice@example.com').post('/ai/settings', data={'owner':'bob@example.com', 'mistral_batch_size': '4'}).status_code == 403
 
 
 @pytest.mark.parametrize('bound', ['count', 'bytes', 'tokens'])
