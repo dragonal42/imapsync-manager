@@ -87,8 +87,10 @@ _rate_sleep = asyncio.sleep
 
 
 async def provider_call(account, key, metadata, active, call, progress, engine="Mistral"):
-    """One shared dispatch budget and 429 cooldown for this application process."""
+    """Dispatch budgets and 429 cooldowns shared only by one owner and provider."""
     global _mistral_next
+    rate_bucket = (account.get('owner', ''), engine)
+    legacy_mistral = engine == 'Mistral' and not account.get('owner')
     prefix = engine.lower()
     model = account.get(prefix + '_model') or os.getenv(prefix.upper() + '_MODEL', 'mistral-small-latest' if engine == 'Mistral' else 'gemini-2.5-flash')
     interval = 1 / float(account.get(prefix + '_rps', 1 if engine == 'Mistral' else .2))
@@ -102,12 +104,12 @@ async def provider_call(account, key, metadata, active, call, progress, engine="
             if active['cancelled']:
                 raise PreprocessingError(f'Arrêt demandé pendant l’attente {engine}.')
             with _rate_lock:
-                remaining = (_mistral_next if engine == 'Mistral' else _other_next.get(engine, 0)) - _rate_now()
+                remaining = (_mistral_next if legacy_mistral else _other_next.get(rate_bucket, 0)) - _rate_now()
                 if remaining <= 0:
-                    if engine == 'Mistral':
+                    if legacy_mistral:
                         _mistral_next = _rate_now() + interval
                     else:
-                        _other_next[engine] = _rate_now() + interval
+                        _other_next[rate_bucket] = _rate_now() + interval
                     break
             if not announced:
                 progress(engine + ' : attente du créneau partagé ou du délai après HTTP 429.')
@@ -138,10 +140,10 @@ async def provider_call(account, key, metadata, active, call, progress, engine="
             if reservation:
                 ai_quotas.defer(reservation, delay, read, save)
             with _rate_lock:
-                if engine == 'Mistral':
+                if legacy_mistral:
                     _mistral_next = max(_mistral_next, _rate_now() + delay)
                 else:
-                    _other_next[engine] = max(_other_next.get(engine, 0), _rate_now() + delay)
+                    _other_next[rate_bucket] = max(_other_next.get(rate_bucket, 0), _rate_now() + delay)
             if attempt == attempts - 1:
                 raise
             progress({'usage': getattr(error, 'usage', {})})
@@ -603,7 +605,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                             continue
                         progress(f'UID {uid_text} : score intermédiaire, analyse {engine} nécessaire.')
                     if not key:
-                        raise PreprocessingError("Clé API IA absente : contactez l’administrateur.")
+                        raise PreprocessingError("Clé API IA absente pour le propriétaire : renseignez ses paramètres IA.")
                     metadata = compact_message(content)
                     record = (uid, arrived, metadata)
                     candidate = envelope(pending + [record])

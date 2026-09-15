@@ -14,6 +14,7 @@ from test_tenants import env, client
 def rate_clock(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(ai, '_mistral_next', 0)
+    monkeypatch.setattr(ai, '_other_next', {})
     monkeypatch.setattr(ai, '_rate_now', lambda: clock[0])
     class QuotaDateTime:
         @staticmethod
@@ -99,12 +100,12 @@ def test_non_429_is_not_retried(rate_clock):
 
 
 def test_admin_rate_model_settings(env):
-    assert main.load_config()['mistral_rps'] == 1
+    assert main.user_ai_settings(main.load_config(), 'admin@example.com')['mistral_rps'] == 1
     form = {'mistral_rps': '0.5', 'mistral_model': 'mistral-small-2603'}
-    assert client('alice@example.com').post('/ai/settings', data=form).status_code == 403
+    assert client('alice@example.com').post('/ai/settings', data={**form, 'owner':'bob@example.com'}).status_code == 403
     assert client('admin@example.com').post('/ai/settings', data=form).status_code == 303
     config = main.load_config()
-    assert config['mistral_rps'] == .5 and config['mistral_model'] == 'mistral-small-2603'
-    assert 'mistral-small-2603' in client('admin@example.com').get('/admin').text
+    assert main.user_ai_settings(config, 'admin@example.com')['mistral_rps'] == .5 and main.user_ai_settings(config, 'admin@example.com')['mistral_model'] == 'mistral-small-2603'
+    assert 'mistral-small-2603' in client('admin@example.com').get('/ai/settings').text
     for value in ('0', 'nan', 'inf', '-1'):
         assert client('admin@example.com').post('/ai/settings', data={'mistral_rps': value}).status_code == 400

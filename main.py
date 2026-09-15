@@ -104,6 +104,33 @@ def interval_from_form(value):
         raise HTTPException(400, "Intervalle invalide : multiple de 5 minutes, de 5 à 10080")
 
 
+AI_DEFAULTS = {
+    "mistral_model": os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
+    "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    "mistral_rps": 1.0, "mistral_rpm": 60, "mistral_rpd": 0, "mistral_tpm": 20000,
+    "gemini_rps": 0.2, "gemini_rpm": 10, "gemini_rpd": 1500, "gemini_tpm": 20000,
+    "mistral_batch_size": 5, "gemini_batch_size": 5,
+}
+AI_KEYS = (*AI_DEFAULTS, "sApiKeyMistral", "sApiKeyGemini")
+
+
+def user_ai_settings(config, email):
+    owner = next((u for u in config['users'] if u['email'] == email), None)
+    if owner is None:
+        return dict(AI_DEFAULTS)
+    return {**AI_DEFAULTS, **{k: v for k, v in owner.get('ai_settings', {}).items() if k in AI_KEYS}}
+
+
+def ai_target(request, config, email):
+    email = email or request.state.user['email']
+    if email != request.state.user['email']:
+        require_admin(request)
+    target = next((u for u in config['users'] if u['email'] == email), None)
+    if target is None:
+        raise HTTPException(404, 'Utilisateur inconnu')
+    return target
+
+
 def load_config():
     config = read_json(CONFIG_FILE, {"accounts": [], "poll_interval": 5,
                                      "report_email": "", "oauth_apps": {}})
@@ -112,13 +139,7 @@ def load_config():
     config.setdefault("runs", [])
     config.setdefault("log_debug", False)
     config.setdefault("log_retention_days", 90)
-    config.setdefault("mistral_rps", 1.0)
-    config.setdefault("mistral_model", os.getenv("MISTRAL_MODEL", "mistral-small-latest"))
     config["poll_interval"] = normalize_interval(config.get("poll_interval", 5))
-    config.setdefault("gemini_model", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
-    for key, value in {"gemini_rps": 0.2, "gemini_rpm": 10, "gemini_rpd": 1500, "gemini_tpm": 20000,
-                       "mistral_batch_size": 5, "gemini_batch_size": 5, "mistral_rpm": 60, "mistral_rpd": 0, "mistral_tpm": 20000}.items():
-        config.setdefault(key, value)
     for key, value in RSPAMD_DEFAULTS.items():
         config.setdefault(key, value)
     for account in config["accounts"]:
@@ -132,6 +153,16 @@ def load_config():
             admin["role"] = "admin"
         for account in config["accounts"]:
             account.setdefault("owner", ADMIN_EMAIL)
+    # Legacy shared credentials belong only to the principal administrator.
+    legacy = {key: config[key] for key in AI_KEYS if key in config}
+    if legacy:
+        principal = next((u for u in config['users'] if u['email'] == ADMIN_EMAIL), None)
+        if principal is not None:
+            personal = principal.setdefault('ai_settings', {})
+            for key, value in legacy.items():
+                personal.setdefault(key, value)
+            for key in AI_KEYS:
+                config.pop(key, None)
     if config != before or not CONFIG_FILE.exists():
         if CONFIG_FILE.exists() and "users" not in before:
             backup = CONFIG_FILE.with_suffix(".pre-saas.json")
@@ -496,13 +527,22 @@ async def create_user(request: Request):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.get("/ai/settings")
+async def ai_settings_page(request: Request, owner: str = ""):
+    config = load_config()
+    target = ai_target(request, config, owner)
+    return render(request, "ai_settings.html", target=target,
+                  ai=user_ai_settings(config, target['email']))
+
+
 @app.post("/rspamd/settings")
 @app.post("/logs/settings")
 @app.post("/ai/settings")
 @app.post("/settings")
 @app.post("/oauth/settings")
 async def settings(request: Request):
-    require_admin(request)
+    if request.url.path != "/ai/settings":
+        require_admin(request)
     form = await request.form()
     config = load_config()
     if request.url.path == "/logs/settings":
@@ -519,6 +559,9 @@ async def settings(request: Request):
         except (ValueError, TypeError) as error:
             raise HTTPException(400, str(error)) from None
     elif request.url.path == "/ai/settings":
+        root_config = config
+        target = ai_target(request, config, str(form.get("owner", "")))
+        config = user_ai_settings(root_config, target["email"])
         for provider in ("mistral", "gemini"):
             rate_key = provider + "_rps"
             if rate_key in form:
@@ -562,6 +605,9 @@ async def settings(request: Request):
                 config.pop(key, None)
             elif value:
                 config[key] = value
+        target['ai_settings'] = config
+        save_config(root_config)
+        return RedirectResponse('/ai/settings?' + urlencode({'owner': target['email']}), status_code=303)
     elif request.url.path == "/settings":
         interval = interval_from_form(form.get("poll_interval", 5))
         config.update(poll_interval=interval, report_email=str(form.get("report_email", "")))
@@ -614,8 +660,8 @@ async def save_account(request: Request, account_id: str = ""):
         raise HTTPException(400, "Moteur IA invalide")
     if ai and (engine == "Rspamd" or form.get("rspamd_precheck") == "on") and not config["rspamd_enabled"]:
         raise HTTPException(400, "Rspamd doit être activé par un administrateur")
-    if ai and engine != "Rspamd" and not config.get("sApiKey" + engine):
-        raise HTTPException(400, "Clé API IA absente : contactez l’administrateur")
+    if ai and engine != "Rspamd" and not user_ai_settings(config, owner).get("sApiKey" + engine):
+        raise HTTPException(400, "Clé API IA absente pour le propriétaire : renseignez ses paramètres IA")
     folder = str(form.get("source_folder", account.get("source_folder", "INBOX"))).strip()
     if not folder or len(folder) > 255 or any(ord(c) < 32 or ord(c) > 126 or c in '\\"*%' for c in folder) or any(name in folder for name in ("_01-Arnaques", "_02-BlackList", "_03-Suspects")):
         raise HTTPException(400, "Dossier source invalide (nom IMAP ASCII, hors quarantaine)")
@@ -1024,16 +1070,17 @@ async def execute(account, actor):
             owner = next((u for u in load_config()["users"] if u["email"] == account["owner"]), {})
             account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
             settings = load_config()
+            personal_ai = user_ai_settings(settings, account["owner"])
             for provider in ("mistral", "gemini"):
                 for option in ("model", "rps", "rpm", "rpd", "tpm", "batch_size"):
-                    account[provider + "_" + option] = settings[provider + "_" + option]
+                    account[provider + "_" + option] = personal_ai[provider + "_" + option]
             for option in RSPAMD_DEFAULTS:
                 account[option] = settings[option]
             quota_file = CONFIG_FILE.with_name("ai_quotas.json")
             account["_quota_read"] = lambda: read_json(quota_file, {})
             account["_quota_save"] = lambda data: write_json(quota_file, data)
             try:
-                await preprocess(account, source_token, load_config().get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
+                await preprocess(account, source_token, personal_ai.get("sApiKey" + account.get("sMoteurIA", "Mistral"), ""),
                                  active, read_state, save_state, progress)
             except Exception as error:
                 if not sync or active["cancelled"]:

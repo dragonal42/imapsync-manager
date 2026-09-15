@@ -1,8 +1,10 @@
+Les tailles de lots sont désormais individuelles : **Mes paramètres IA**, ou **Administration → Paramètres IA par utilisateur**. Chaque propriétaire possède son réglage Mistral et son réglage Gemini ; les tâches utilisent ceux de leur propriétaire. Voir la migration dans le README.
+
 # Analyse IA par lots
 
-Dans `/admin`, chaque moteur possède son champ **Emails maximum par lot** :
+Dans `/ai/settings`, chaque moteur possède son champ **Emails maximum par lot** :
 `mistral_batch_size` et `gemini_batch_size`, chacun à **5** par défaut, entre **1 et 50**.
-Ces valeurs globales s’appliquent à toutes les configurations et aux analyses manuelles.
+Ces valeurs s’appliquent aux configurations et analyses manuelles du propriétaire concerné.
 Elles sont lues au démarrage de chaque exécution. Un réglage à 1 conserve le protocole
 historique avec un seul verdict par appel.
 
@@ -11,7 +13,7 @@ Les filtres de période, de lecture et de suivi restent appliqués, ainsi que le
 blanche et noire qui ne consomment aucun appel IA. Le dernier lot peut être incomplet.
 La limite de 64 Kio de métadonnées et le budget TPM peuvent réduire un lot davantage.
 Un message qui dépasse seul le budget TPM arrête le contrôle IA avec un avertissement.
-Les quotas et délais après HTTP 429 restent partagés entre les tâches.
+Les quotas et délais après HTTP 429 sont partagés entre les tâches du même propriétaire uniquement.
 
 Exemple de contenu envoyé dans un appel Mistral ou Gemini (hors enveloppe propre à l’API) :
 

@@ -11,7 +11,7 @@ class QuotaExceeded(Exception):
 
 async def reserve(engine, model, settings, estimate, active, progress, read, save):
     prefix = engine.lower()
-    key = engine + ':' + model
+    key = (settings['owner'] + ':' if settings.get('owner') else '') + engine + ':' + model
     rpm = settings.get(prefix + '_rpm', 0)
     rpd = settings.get(prefix + '_rpd', 0)
     tpm = settings.get(prefix + '_tpm', 0)
