@@ -33,7 +33,7 @@ def seed_runs():
 
 def test_date_filter_stats_and_second_precision(env):
     today = seed_runs()
-    response = client("alice@example.com").get("/dashboard")
+    response = client("alice@example.com").get("/dashboard?history=1")
     assert "RUN_today" in response.text and "RUN_included" in response.text
     assert "RUN_excluded" not in response.text and "RUN_bob" not in response.text
     assert ".123456" not in response.text
@@ -160,3 +160,25 @@ def test_log_redaction_keeps_actionable_errors(env):
     result = main.clean_log(b"Command line: --password1 secret\nError: missing --password2\nAUTH PLAIN abc\nsecret\n", ["secret"])
     assert "secret" not in result and "AUTH PLAIN" not in result
     assert "Error: missing --password2" in result
+
+
+def test_history_is_opt_in_and_task_filter_is_private(env):
+    seed_runs()
+    alice = client('alice@example.com')
+    page = alice.get('/dashboard').text
+    assert 'RUN_today' not in page and 'RUN_included' not in page
+    assert 'history=1&amp;account_id=a#historique' in page
+    page = alice.get('/dashboard?history=1&account_id=a').text
+    assert 'RUN_today' in page and 'RUN_bob' not in page
+    assert 'action="/dashboard#historique"' in page
+    assert alice.get('/dashboard?history=1&account_id=b').status_code == 404
+    admin = client('admin@example.com').get('/dashboard?history=1&account_id=b').text
+    assert 'RUN_bob' in admin and 'RUN_today' not in admin
+    from html.parser import HTMLParser
+    class Forms(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'form' and attrs.get('action','').startswith('/logs/delete/'):
+                assert 'data-confirm' not in attrs
+    Forms().feed(page)
+    Forms().feed(alice.get('/logs/today').text)
