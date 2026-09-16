@@ -1,0 +1,4 @@
+<div class="grid">{% for kind, title in [('whitelist','WhiteList'),('blacklist','BlackList')] %}
+<section data-sender-list="{{ kind }}"><h2>{{ title }} — <span data-total>{{ totals[kind] }}</span> adresses au total</h2>
+{% if search_active %}<ul class="sender-addresses">{% for email in sender_lists[kind] %}<li><span>{{ email }}</span><button type="button" class="danger sender-delete" data-kind="{{ kind }}" data-email="{{ email }}" aria-label="Supprimer {{ email }} de {{ title }}">Supprimer</button></li>{% endfor %}</ul>
+<p class="muted" data-empty {% if sender_lists[kind] %}hidden{% endif %}>Aucune adresse correspondant à la recherche.</p>{% else %}<p class="muted">Adresses masquées. Recherche de 3 caractères minimum.</p>{% endif %}</section>{% endfor %}</div>
