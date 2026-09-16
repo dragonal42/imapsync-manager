@@ -454,8 +454,8 @@ async def sender_lists_page(request: Request, q: str = ""):
     user = request.state.user
     lists = user.get("sender_lists", {})
     query = q.strip().lower()[:254]
-    return render(request, "sender_lists.html", q=query,
-                  sender_lists={kind: sorted(email for email in lists.get(kind, []) if query in email) for kind in KINDS},
+    return render(request, "sender_lists.html", q=query, search_active=len(query) >= 3,
+                  sender_lists={kind: sorted(email for email in lists.get(kind, []) if len(query) >= 3 and query in email) for kind in KINDS},
                   totals={kind: len(lists.get(kind, [])) for kind in KINDS})
 
 
