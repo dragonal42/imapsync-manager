@@ -414,7 +414,8 @@ async def logout(request: Request):
 
 
 @app.get("/dashboard")
-async def dashboard(request: Request, owner: str = "", date_from: str = "", date_to: str = ""):
+async def dashboard(request: Request, owner: str = "", date_from: str = "", date_to: str = "", history: bool = False, account_id: str = ""):
+    show_history = history or bool(date_from or date_to or account_id)
     config = load_config()
     today = datetime.now(local_zone()).date()
     try:
@@ -431,14 +432,17 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
     stats = {"users": len(config["users"]) if request.state.user["role"] == "admin" else 1,
              "accounts": len(config["accounts"]),
              "errors": sum(r.get("status") == "Erreur" and run_date(r) == today for r in config["runs"])}
-    config["runs"] = [r for r in config["runs"] if run_date(r) and start <= run_date(r) <= end]
+    if account_id:
+        account_for(request, config, account_id)
+    config["runs"] = [r for r in config["runs"] if show_history and run_date(r) and start <= run_date(r) <= end
+                      and (not account_id or str(r.get("account_id", "")) == account_id)]
     if request.state.user["role"] != "admin":
         config["users"] = []
     config["oauth_apps"] = {}
     config.pop("sApiKeyMistral", None)
     config.pop("sApiKeyGemini", None)
     config["report_email"] = ""
-    return render(request, "dashboard.html", config=config, owner=owner, stats=stats,
+    return render(request, "dashboard.html", config=config, owner=owner, stats=stats, show_history=show_history, selected_account=account_id,
                   date_from=start.isoformat(), date_to=end.isoformat(), timezone_name=str(local_zone()))
 
 
