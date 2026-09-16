@@ -164,3 +164,14 @@ def test_short_search_hides_addresses_but_keeps_totals(env, query):
     assert '<span data-total>2</span>' in page and '<span data-total>1</span>' in page
     assert all(address not in page for address in ('hidden@example.org','other@example.org','blocked@example.org'))
     assert '3 caractères minimum' in page
+
+
+def test_ajax_results_are_private_and_require_three_characters(env):
+    alice = client('alice@example.com')
+    alice.post('/sender-lists/import',data={'kind':'whitelist','emails':'private@example.org'})
+    assert 'private@example.org' not in alice.get('/sender-lists/search?q=pr').text
+    result = alice.get('/sender-lists/search?q=PRI')
+    assert result.status_code == 200 and 'private@example.org' in result.text
+    assert '<html' not in result.text and 'sender-import' not in result.text
+    assert 'private@example.org' not in client('bob@example.com').get('/sender-lists/search?q=private&owner=alice@example.com').text
+    assert client().get('/sender-lists/search?q=private').status_code == 303

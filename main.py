@@ -449,12 +449,13 @@ async def task_status(request: Request):
                          for a in config["accounts"] if visible(request.state.user, a)]}
 
 
+@app.get("/sender-lists/search")
 @app.get("/sender-lists")
 async def sender_lists_page(request: Request, q: str = ""):
     user = request.state.user
     lists = user.get("sender_lists", {})
     query = q.strip().lower()[:254]
-    return render(request, "sender_lists.html", q=query, search_active=len(query) >= 3,
+    return render(request, "sender_list_results.html" if request.url.path.endswith("/search") else "sender_lists.html", q=query, search_active=len(query) >= 3,
                   sender_lists={kind: sorted(email for email in lists.get(kind, []) if len(query) >= 3 and query in email) for kind in KINDS},
                   totals={kind: len(lists.get(kind, [])) for kind in KINDS})
 
