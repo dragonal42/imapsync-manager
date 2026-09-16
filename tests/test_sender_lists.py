@@ -39,14 +39,14 @@ def test_import_preview_is_readonly_and_lists_are_private(env):
     users = {u['email']: u for u in main.load_config()['users']}
     assert users['alice@example.com']['sender_lists']['whitelist'] == ['a@example.com', 'b@example.com']
     assert not users['bob@example.com'].get('sender_lists')
-    assert 'a@example.com' in alice.get('/sender-lists').text
-    assert 'a@example.com' not in bob.get('/sender-lists?owner=alice@example.com').text
+    assert 'a@example.com' in alice.get('/sender-lists?q=example').text
+    assert 'a@example.com' not in bob.get('/sender-lists?owner=alice@example.com&q=example').text
     assert alice.post('/sender-lists/import', data=payload).json()['added'] == 0
     conflict = {**payload, 'kind': 'blacklist'}
     assert alice.post('/sender-lists/preview', data=conflict).status_code == 409
     assert alice.post('/sender-lists/import', data=conflict).status_code == 409
-    assert 'a@example.com' not in alice.get('/sender-lists?q=b%40').text
-    assert 'b@example.com' in alice.get('/sender-lists?q=B%40').text
+    assert 'a@example.com' not in alice.get('/sender-lists?q=b%40e').text
+    assert 'b@example.com' in alice.get('/sender-lists?q=B%40E').text
     assert bob.post('/sender-lists/delete', data={'kind': 'whitelist', 'email': 'a@example.com', 'owner': 'alice@example.com'}).json()['removed'] is False
     assert alice.post('/sender-lists/delete', data={'kind': 'whitelist', 'email': 'a@example.com'}).json()['removed'] is True
     assert 'a@example.com' not in alice.get('/sender-lists').text
@@ -152,3 +152,15 @@ def test_manual_background_completion_retains_client_ip(env, monkeypatch, audit_
     text = audit_output.getvalue()
     assert '[MANUAL_SYNC_REQUESTED] [198.51.100.44]' in text
     assert '[MANUAL_SYNC_FINISHED] [198.51.100.44]' in text
+
+
+@pytest.mark.parametrize('query', ['', 'a', 'al', '  al  '])
+def test_short_search_hides_addresses_but_keeps_totals(env, query):
+    config = main.load_config()
+    next(u for u in config['users'] if u['email']=='alice@example.com')['sender_lists'] = {
+        'whitelist':['hidden@example.org','other@example.org'], 'blacklist':['blocked@example.org']}
+    main.save_config(config)
+    page = client('alice@example.com').get('/sender-lists',params={'q':query}).text
+    assert '<span data-total>2</span>' in page and '<span data-total>1</span>' in page
+    assert all(address not in page for address in ('hidden@example.org','other@example.org','blocked@example.org'))
+    assert '3 caractères minimum' in page

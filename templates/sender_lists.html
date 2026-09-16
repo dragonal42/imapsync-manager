@@ -7,9 +7,10 @@
 <label>Adresses email<textarea name="emails" rows="6" maxlength="300000" required aria-describedby="sender-format" placeholder="alice@example.com; bob@example.com"></textarea></label>
 <p id="sender-format">Séparateurs acceptés : point-virgule (;), barre verticale (|), virgule (,), tabulation (TAB) ou retour à la ligne. Adresses seules, sans nom d’affichage. Maximum 1000 adresses par import ; les doublons sont ignorés.</p>
 <button type="submit">Vérifier et importer</button></form></section>
-<form method="get" action="/sender-lists" class="filters"><label>Recherche « contient »<input type="search" name="q" value="{{ q }}" placeholder="exemple.com"></label><button>Rechercher</button><a href="/sender-lists">Effacer la recherche</a></form>
+<form method="get" action="/sender-lists" class="filters"><label>Recherche « contient »<input type="search" name="q" minlength="3" maxlength="254" aria-describedby="sender-search-help" value="{{ q }}" placeholder="exemple.com"></label><button>Rechercher</button><a href="/sender-lists">Effacer la recherche</a></form>
+<p id="sender-search-help" class="muted">Saisissez au moins 3 caractères puis cliquez sur Rechercher pour afficher les adresses correspondantes.</p>
 <div class="grid">{% for kind, title in [('whitelist','WhiteList'),('blacklist','BlackList')] %}
-<section data-sender-list="{{ kind }}"><h2>{{ title }} — <span data-total>{{ totals[kind] }}</span></h2>
-<ul class="sender-addresses">{% for email in sender_lists[kind] %}<li><span>{{ email }}</span><button type="button" class="danger sender-delete" data-kind="{{ kind }}" data-email="{{ email }}" aria-label="Supprimer {{ email }} de {{ title }}">Supprimer</button></li>{% endfor %}</ul>
-<p class="muted" data-empty {% if sender_lists[kind] %}hidden{% endif %}>Aucune adresse correspondant à la recherche.</p></section>{% endfor %}</div>
+<section data-sender-list="{{ kind }}"><h2>{{ title }} — <span data-total>{{ totals[kind] }}</span> adresses au total</h2>
+{% if search_active %}<ul class="sender-addresses">{% for email in sender_lists[kind] %}<li><span>{{ email }}</span><button type="button" class="danger sender-delete" data-kind="{{ kind }}" data-email="{{ email }}" aria-label="Supprimer {{ email }} de {{ title }}">Supprimer</button></li>{% endfor %}</ul>
+<p class="muted" data-empty {% if sender_lists[kind] %}hidden{% endif %}>Aucune adresse correspondant à la recherche.</p>{% else %}<p class="muted">Adresses masquées. Recherche de 3 caractères minimum.</p>{% endif %}</section>{% endfor %}</div>
 <script defer src="/static/sender_lists.js"></script>{% endblock %}
