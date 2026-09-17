@@ -153,7 +153,8 @@ def test_read_messages_skipped(monkeypatch):
 def test_source_only_execute_never_starts_imapsync(env, monkeypatch):
     account = copy.deepcopy(main.load_config()['accounts'][0])
     account.update(bActiverSynchro=False)
-    check = AsyncMock()
+    async def checked_message(*args): args[-1]({'whitelisted': True})
+    check = AsyncMock(side_effect=checked_message)
     process = AsyncMock(side_effect=AssertionError('must not run'))
     monkeypatch.setattr(main, 'preprocess', check)
     monkeypatch.setattr(main.asyncio, 'create_subprocess_exec', process)
