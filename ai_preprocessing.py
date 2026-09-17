@@ -446,12 +446,16 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                 raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
             ai_quarantine = "INBOX" + (quarantine_delimiter or "/") + "_01-Arnaques"
             lists = account.get("sender_lists", {})
-            cutoff = datetime.now(timezone.utc) - timedelta(days=account.get("nPeriodeJours", 5))
-            months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
-            search_day = cutoff - timedelta(days=1)  # SINCE ignores the server timezone; filter precisely below.
-            since = f"{search_day.day:02d}-{months[search_day.month-1]}-{search_day.year}"
-            progress(f"IMAP : recherche UNSEEN UNDELETED SINCE {since} | UIDVALIDITY {validity.decode()}.")
-            uids = checked(await call(client.uid, "SEARCH", None, "UNSEEN", "UNDELETED", "SINCE", since))[0].split()
+            days = account.get("nPeriodeJours", 5)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+            criteria = ["UNSEEN", "UNDELETED"]
+            if cutoff is not None:
+                search_day = cutoff - timedelta(days=1)
+                months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+                since = f"{search_day.day:02d}-{months[search_day.month-1]}-{search_day.year}"
+                criteria += ["SINCE", since]
+            progress(f"IMAP : recherche {' '.join(criteria)} | période : {str(days) + ' jours' if days else 'sans limite de date'} | UIDVALIDITY {validity.decode()}.")
+            uids = checked(await call(client.uid, "SEARCH", None, *criteria))[0].split()
             unread = checked(await call(client.uid, "SEARCH", None, "UNSEEN", "UNDELETED"))[0].split()
             scan = {"folder": folder, "total": total, "unread": len(unread), "candidates": len(uids),
                     "already_done": sum(state.get(uid.decode("ascii")) == "done" for uid in uids), "too_old": 0}
@@ -555,7 +559,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                 if not size or not date_match or b"\\Seen" in info or b"\\Deleted" in info:
                     continue
                 arrived = parsedate_to_datetime(date_match[1].decode().replace("-", " ", 2))
-                if arrived < cutoff:
+                if cutoff is not None and arrived < cutoff:
                     scan["too_old"] += 1
                     progress({"folder_scan": dict(scan)})
                     continue

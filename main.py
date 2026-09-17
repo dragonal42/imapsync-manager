@@ -844,7 +844,7 @@ async def manual_sync(request: Request):
         except (ValueError, TypeError):
             raise HTTPException(400, "Période IA invalide")
         folder = str(form.get("source_folder", "INBOX")).strip(" ")
-        if not 1 <= days <= 365 or not folder or len(folder) > 255 or not folder.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in folder):
+        if not 0 <= days <= 36500 or not folder or len(folder) > 255 or not folder.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in folder):
             raise HTTPException(400, "Période ou dossier IA invalide (nom IMAP ASCII)")
         mode = str(form.get("ai_mode", "preview"))
         if mode not in {"preview", "move"}:
@@ -857,6 +857,15 @@ async def manual_sync(request: Request):
                        ai_recursive=form.get("ai_recursive") == "on", ai_recheck=form.get("ai_recheck") == "on")
     else:
         account["options"] = ["--" + f for f in ("delete1", "delete2", "dry", "justlogin", "justfolders", "justfoldersizes") if form.get(f) == "on"]
+        try:
+            transfer_days = int(form.get("transfer_days", "0"))
+            if not 0 <= transfer_days <= 36500:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Période de transfert invalide (0 à 36500 jours)")
+        if transfer_days:
+            account["options"] += ["--maxage", str(transfer_days)]
+
         if "--delete1" in account["options"] and "--delete2" in account["options"]:
             raise HTTPException(400, "Choisissez une seule option de suppression : source ou destination")
         for key in ("subfolder1", "subfolder2"):
