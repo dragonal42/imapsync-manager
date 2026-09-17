@@ -68,7 +68,7 @@ def test_manual_ai_source_only_private_debug_history(env, monkeypatch):
     assert not main.load_config()['log_debug']
 
 
-@pytest.mark.parametrize('field, value', [('sMoteurIA', 'unknown'), ('nPeriodeJours', '0'),
+@pytest.mark.parametrize('field, value', [('sMoteurIA', 'unknown'), ('nPeriodeJours', '-1'),
     ('nPeriodeJours', 'bad'), ('source_folder', 'INBOX\r\n'), ('ai_mode', 'bad')])
 def test_manual_ai_validation(env, field, value):
     response = client('alice@example.com').post('/cgi-bin/imapsync', data={
@@ -112,3 +112,36 @@ def test_mistral_text_parts_supported(monkeypatch):
             {'type': 'text', 'text': '{"verdict":"legitimate"}'}]}}]}
     monkeypatch.setattr(ai.requests, 'post', lambda *a, **kw: Response())
     assert ai.classify('Mistral', 'SECRET', {}) == 'legitimate'
+
+
+@pytest.mark.parametrize('days', [0, 30])
+def test_manual_periods(env, monkeypatch, days):
+    seen=[]
+    async def execute(account, actor):
+        seen.append(account)
+        main.processes.pop(account['id'],None)
+    monkeypatch.setattr(main,'execute',execute)
+    browser=client('alice@example.com')
+    source={'host1':'mail','user1':'alice','password1':'secret'}
+    assert browser.post('/cgi-bin/imapsync',data={**source,'action':'ai','nPeriodeJours':days}).status_code==200
+    assert seen[-1]['nPeriodeJours']==days
+    assert browser.post('/cgi-bin/imapsync',data={**source,'host2':'mail2','user2':'dest','password2':'secret','transfer_days':days}).status_code==200
+    assert ('--maxage' in seen[-1]['options']) == bool(days)
+
+
+def test_zero_period_accepts_old_message_without_since(monkeypatch):
+    mailbox=Mailbox()
+    mailbox.date=b'01-Jan-2000 00:00:00 +0000'
+    monkeypatch.setattr(ai.imaplib,'IMAP4_SSL',lambda *a,**kw:mailbox)
+    events=[]
+    account={'owner':'alice','host1':'mail','user1':'alice','pass1':'secret','nPeriodeJours':0,
+             'bPretraitementIA':True,'ai_dry':True,'sender_lists':{'whitelist':['known@example.com']}}
+    original=mailbox.uid
+    def uid(command,*args):
+        if command=='FETCH' and args[1]=='(BODY.PEEK[HEADER.FIELDS (FROM)])':
+            return 'OK',[(b'1',b'From: known@example.com\r\n\r\n')]
+        return original(command,*args)
+    mailbox.uid=uid
+    asyncio.run(ai.preprocess(account,'','',{'cancelled':False},lambda _: {},lambda *a:None,events.append))
+    assert any(isinstance(e,dict) and e.get('whitelisted') for e in events)
+    assert all('SINCE' not in args for cmd,args in mailbox.calls if cmd=='SEARCH')
