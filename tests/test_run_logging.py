@@ -202,3 +202,46 @@ def test_mistral_multiple_responses_accumulate_in_log(env, monkeypatch, debug):
     assert 'cumul de cette exécution (2 appels)' in run['log']
     assert 'entrée : 65 ; sortie : 25 ; total : 90' in run['log']
     assert 'partiel' not in run['log']
+
+
+@pytest.mark.parametrize('sync', [True, False])
+def test_empty_success_not_retained_but_completion_and_schedule_survive(env, monkeypatch, sync):
+    account = main.load_config()['accounts'][0]
+    account.update(bActiverSynchro=sync, bPretraitementIA=True)
+    monkeypatch.setattr(main,'preprocess',AsyncMock())
+    process = type('Process',(),{'returncode':0, 'wait':AsyncMock(),
+        'stdout':type('Output',(),{'read':AsyncMock(side_effect=[b'Messages transferred : 0\n',b''])})()})()
+    monkeypatch.setattr(main.asyncio,'create_subprocess_exec',AsyncMock(return_value=process))
+    main.processes['a']={'process':None,'cancelled':False,'run_id':'empty-test'}
+    asyncio.run(main.execute(account,{'pseudo':'Alice'}))
+    config=main.load_config()
+    assert not any(r['id']=='empty-test' for r in config['runs'])
+    assert config['accounts'][0]['status']=='Succès' and config['accounts'][0]['last_run']!='Jamais'
+    from test_tenants import client
+    result=client('alice@example.com').get('/api/logs/empty-test').json()
+    assert result['finished'] and result['retained'] is False
+    assert client('bob@example.com').get('/api/logs/empty-test').status_code==404
+    main.empty_completions.clear()
+
+
+@pytest.mark.parametrize('counter', ['analysed','ai_calls','whitelisted','blacklisted','blacklist_moved','rspamd_analysed','rspamd_moved','quarantined'])
+def test_activity_requires_retaining_log(counter):
+    metrics=RunMetrics({})
+    metrics.data.update(transferred=0,returncode=0)
+    assert metrics.no_activity()
+    metrics.data[counter]=1
+    assert not metrics.no_activity()
+
+
+def test_unknown_or_failed_transfer_not_empty():
+    metrics=RunMetrics({})
+    assert not metrics.no_activity()
+    metrics.data.update(transferred=0,returncode=64)
+    assert not metrics.no_activity()
+
+
+def test_deleted_messages_are_activity_even_without_transfer():
+    metrics=RunMetrics({})
+    metrics.data['returncode']=0
+    metrics.feed(b'Messages transferred : 0\nMessages deleted on host1 : 2\n')
+    assert not metrics.no_activity()

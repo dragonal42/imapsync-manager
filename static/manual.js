@@ -17,7 +17,7 @@ async function pollManual() {
         document.getElementById('manual-status').textContent = result.sender_export && result.finished && result.status === 'Succès' ? `Extraction terminée — dossier ${result.resolved_sent_folder || "Envoyés"} : ${result.scanned_messages} messages examinés${result.sent_total_messages != null ? ` sur ${result.sent_total_messages} présents` : ""} ; ${result.sender_count} adresses uniques après déduplication et filtre liste blanche. Copiez la liste ci-dessous.` : result.status;
         copySendersButton.hidden = !(result.sender_export && result.finished && result.status === 'Succès' && result.sender_count > 0);
         const link = document.getElementById('manual-log');
-        link.href = '/logs/' + encodeURIComponent(runId); link.hidden = false;
+        link.href = '/logs/' + encodeURIComponent(runId); link.hidden = result.retained === false;
         runButton.disabled = aiButton.disabled = sendersButton.disabled = !result.finished; stopButton.disabled = result.finished;
         if (result.finished) {
             sessionStorage.removeItem('imapsync-manual-run'); runId = null;

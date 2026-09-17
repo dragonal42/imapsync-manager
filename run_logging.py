@@ -37,7 +37,7 @@ class RunMetrics:
                      'whitelisted': 0, 'blacklisted': 0, 'blacklist_moved': 0,
                      'rspamd_enabled': account.get('sMoteurIA') == 'Rspamd' or account.get('rspamd_precheck', False),
                      'rspamd_analysed': 0, 'rspamd_suspect': 0, 'rspamd_moved': 0, 'rspamd_simulation': False,
-                     'folders': {}, 'usage': {}, 'usage_reports': {}, 'returncode': None}
+                     'deleted1': None, 'deleted2': None, 'folders_deleted': None, 'folders': {}, 'usage': {}, 'usage_reports': {}, 'returncode': None}
         self.pending = b''
 
     def event(self, event):
@@ -74,6 +74,18 @@ class RunMetrics:
             match = re.match(rb'^Messages transferred\s*:\s*(\d+)\b', line.strip())
             if match:
                 self.data['transferred'] = int(match[1])
+            for label, key in ((b'Messages deleted on host1', 'deleted1'), (b'Messages deleted on host2', 'deleted2'), (b'Folders deleted on host2', 'folders_deleted')):
+                match = re.match(rb'^' + label + rb'\s*:\s*(\d+)\b', line.strip())
+                if match:
+                    self.data[key] = int(match[1])
+
+    def no_activity(self):
+        d = self.data
+        if d['sync_enabled'] and (d['transferred'] != 0 or d['returncode'] != 0):
+            return False
+        counters = ('analysed', 'fraudulent', 'quarantined', 'ai_calls', 'whitelisted',
+                    'blacklisted', 'blacklist_moved', 'rspamd_analysed', 'rspamd_suspect', 'rspamd_moved')
+        return not any(d.get(key) for key in (*counters, 'deleted1', 'deleted2', 'folders_deleted')) and not any(d['usage'].values())
 
     def summary(self, status, note=''):
         d = self.data

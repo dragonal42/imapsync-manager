@@ -40,6 +40,7 @@ MAGIC_TTL = 900
 SESSION_TTL = 43200
 processes = {}
 tasks = set()
+empty_completions = {}  # Bounded, temporary completion notices for live polling only.
 templates = Jinja2Templates(directory="templates")
 logger = logging.getLogger(__name__)
 
@@ -910,6 +911,14 @@ async def execute_sender_export(account, actor):
 
 @app.get("/api/logs/{run_id}")
 async def poll_run(request: Request, run_id: str):
+    now = time.monotonic()
+    for key in list(empty_completions):
+        if empty_completions[key]['expires'] <= now:
+            empty_completions.pop(key, None)
+    notice = empty_completions.get(run_id)
+    if notice and visible(request.state.user, notice):
+        return {'status': 'Succès', 'finished': True, 'retained': False,
+                'log': 'Aucun email traité : exécution terminée, aucun journal conservé.'}
     run = run_for(request, load_config(), run_id)
     return {"status": run["status"], "log": run["log"], "finished": run["status"] != "Synchronisation...",
             "scanned_messages": run.get("scanned_messages", 0), "resolved_sent_folder": run.get("resolved_sent_folder", ""), "sent_total_messages": run.get("sent_total_messages"),
@@ -1156,6 +1165,21 @@ async def execute(account, actor):
         for current in config["runs"]:
             if current["id"] == run["id"]:
                 current.update(status=status, finished=finished, warnings=warnings, log=run["log"], metrics=copy.deepcopy(metrics.data), log_debug=debug)
+        # Keep uncertain or potentially destructive runs even when transfers are zero.
+        special_options = any(flag.startswith(('--expunge', '--just')) for flag in account.get('options', []))
+        deletion_unknown = any((account.get('delete' + side) or '--delete' + side in account.get('options', []))
+                               and metrics.data['deleted' + side] is None for side in ('1', '2'))
+        omit_log = (status == 'Succès' and not warnings and not note and metrics.no_activity()
+                    and not special_options and not deletion_unknown)
+        if omit_log:
+            config['runs'] = [entry for entry in config['runs'] if entry['id'] != run['id']]
+            now = time.monotonic()
+            for key in list(empty_completions):
+                if empty_completions[key]['expires'] <= now:
+                    empty_completions.pop(key, None)
+            while len(empty_completions) >= 256:
+                empty_completions.pop(next(iter(empty_completions)))
+            empty_completions[run['id']] = {'owner': account['owner'], 'expires': now + 900}
         for current in config["accounts"]:
             if str(current["id"]) == account_id:
                 current.update(status=status, last_run=finished)
