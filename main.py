@@ -194,7 +194,7 @@ def digest(token):
 def user_for(request):
     session = auth_data()["sessions"].get(digest(request.cookies.get(COOKIE, "")))
     if session:
-        return next((u for u in load_config()["users"] if u["email"] == session["email"]), None)
+        return next((u for u in load_config()["users"] if u["email"] == session["email"] and u.get("enabled", True)), None)
 
 
 def require_admin(request):
@@ -368,7 +368,7 @@ async def request_link(request: Request):
         limit["count"] += 1
         limited |= limit["count"] > maximum
     user = next((u for u in load_config()["users"] if u["email"] == email), None)
-    known = user is not None
+    known = user is not None and user.get("enabled", True)
     if known and not limited:
         token = secrets.token_urlsafe(32)
         data["links"][digest(token)] = {"email": email, "expires": time.time() + MAGIC_TTL}
@@ -391,7 +391,7 @@ async def consume_link(request: Request):
     form = await request.form()
     data = auth_data()
     link = data["links"].pop(digest(str(form.get("token", ""))), None)
-    user = next((u for u in load_config()["users"] if link and u["email"] == link["email"]), None)
+    user = next((u for u in load_config()["users"] if link and u["email"] == link["email"] and u.get("enabled", True)), None)
     if not user:
         return render(request, "login.html", error="Lien invalide, expiré ou déjà utilisé. Demandez un nouveau lien.")
     token = secrets.token_urlsafe(32)
@@ -515,7 +515,7 @@ async def delete_sender_address(request: Request):
 @app.get("/admin")
 async def administration(request: Request):
     require_admin(request)
-    return render(request, "admin.html", config=load_config())
+    return render(request, "admin.html", config=load_config(), principal_email=ADMIN_EMAIL)
 
 
 @app.post("/admin/users")
@@ -528,9 +528,94 @@ async def create_user(request: Request):
     config = load_config()
     if any(u["email"] == email for u in config["users"]):
         raise HTTPException(409, "Utilisateur déjà enregistré")
-    config["users"].append({"email": email, "pseudo": pseudo, "role": "user"})
+    config["users"].append({"email": email, "pseudo": pseudo, "role": "user", "ai_identity": secrets.token_hex(16)})
     save_config(config)
     return RedirectResponse("/admin", status_code=303)
+
+
+def revoke_user_access(email):
+    data = auth_data()
+    sessions = {key for key, value in data['sessions'].items() if value['email'] == email}
+    for section in ('sessions', 'links'):
+        data[section] = {key: value for key, value in data[section].items() if value.get('email') != email}
+    data['oauth'] = {key: value for key, value in data['oauth'].items() if value.get('session') not in sessions}
+    data['limits'].pop(digest(email), None)
+    write_json(AUTH_FILE, data)
+
+
+@app.post("/admin/users/{action}")
+async def manage_user(request: Request, action: str):
+    require_admin(request)
+    if action not in {'edit', 'status', 'delete'}:
+        raise HTTPException(404, 'Action inconnue')
+    form = await request.form()
+    email = str(form.get('user_email', '')).strip().lower()
+    config = load_config()
+    target = next((u for u in config['users'] if u['email'] == email), None)
+    if target is None:
+        raise HTTPException(404, 'Utilisateur inconnu')
+    if any(p.get('owner') == email for p in processes.values()):
+        raise HTTPException(409, 'Arrêtez les tâches en cours de cet utilisateur avant cette opération.')
+    if action != 'edit' and email in {ADMIN_EMAIL, request.state.user['email']}:
+        raise HTTPException(400, 'Impossible de désactiver ou supprimer votre compte ou l’administrateur principal.')
+    if action == 'edit':
+        new_email = str(form.get('email', '')).strip().lower()
+        pseudo = str(form.get('pseudo', '')).strip()
+        if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', new_email) or not 1 <= len(pseudo) <= 80 or any(ord(c) < 32 for c in pseudo):
+            raise HTTPException(400, 'Email ou pseudo invalide')
+        if email == ADMIN_EMAIL and new_email != email:
+            raise HTTPException(400, 'L’email de l’administrateur principal est défini par ADMIN_EMAIL.')
+        if any(u['email'] == new_email and u is not target for u in config['users']):
+            raise HTTPException(409, 'Email déjà utilisé')
+        if new_email != email:
+            target.setdefault('ai_identity', email)
+            target['former_emails'] = sorted(set(target.get('former_emails', []) + [email]))
+            for item in config['accounts'] + config['runs']:
+                if item.get('owner') == email:
+                    item['owner'] = new_email
+            quota_file = CONFIG_FILE.with_name('ai_quotas.json')
+            quota = read_json(quota_file, {})
+            quota = {(new_email + key[len(email):] if key.startswith(email + ':') else key): value for key, value in quota.items()}
+            write_json(quota_file, quota)
+            revoke_user_access(email)
+            for notice in empty_completions.values():
+                if notice['owner'] == email:
+                    notice['owner'] = new_email
+        target.update(email=new_email, pseudo=pseudo)
+    elif action == 'status':
+        enabled = str(form.get('enabled', ''))
+        if enabled not in {'true', 'false'}:
+            raise HTTPException(400, 'État invalide')
+        target['enabled'] = enabled == 'true'
+        if not target['enabled']:
+            revoke_user_access(email)
+    else:
+        config['accounts'] = [a for a in config['accounts'] if a.get('owner') != email]
+        config['runs'] = [r for r in config['runs'] if r.get('owner') != email]
+        config['users'].remove(target)
+        revoke_user_access(email)
+        quota_file = CONFIG_FILE.with_name('ai_quotas.json')
+        write_json(quota_file, {k:v for k,v in read_json(quota_file, {}).items() if not k.startswith(email + ':')})
+        for key in list(empty_completions):
+            if empty_completions[key]['owner'] == email:
+                empty_completions.pop(key)
+        state_file = CONFIG_FILE.with_name('ai_state.json')
+        index_file = CONFIG_FILE.with_name('ai_state_owners.json')
+        index = read_json(index_file, {})
+        identity = target.get('ai_identity', email)
+        owned = {k for k,v in index.items() if v == identity}
+        write_json(state_file, {k:v for k,v in read_json(state_file, {}).items() if k not in owned})
+        write_json(index_file, {k:v for k,v in index.items() if k not in owned})
+        report = CONFIG_FILE.with_name('daily_errors.log')
+        if report.exists():
+            report.write_text(''.join(line for line in report.read_text(encoding='utf-8').splitlines(keepends=True)
+                                     if not any(re.match(r'^\[[^]]+\] \[' + re.escape(address) + r'\]', line)
+                                                for address in [email] + target.get('former_emails', []))), encoding='utf-8')
+    save_config(config)
+    audit('USER_' + action.upper(), request.state.user, target_email=email,
+          new_email=target['email'] if action == 'edit' else None,
+          enabled=target.get('enabled', True) if action == 'status' else None)
+    return RedirectResponse('/admin', status_code=303)
 
 
 @app.get("/ai/settings")
@@ -716,6 +801,8 @@ async def delete_account(request: Request, account_id: str):
 @app.post("/account/run/{account_id}")
 async def run_account(request: Request, account_id: str):
     account = account_for(request, load_config(), account_id)
+    if not any(u["email"] == account["owner"] and u.get("enabled", True) for u in load_config()["users"]):
+        raise HTTPException(409, "Le propriétaire de cette configuration est désactivé")
     if account_id in processes:
         raise HTTPException(409, "Synchronisation déjà en cours")
     processes[account_id] = {"owner": account["owner"], "process": None, "cancelled": False}
@@ -801,6 +888,8 @@ async def manual_sync(request: Request):
             if active["process"] and active["process"].returncode is None:
                 active["process"].terminate()
         return {"message": "Arrêt demandé"}
+    if not any(u["email"] == request.state.user["email"] and u.get("enabled", True) for u in load_config()["users"]):
+        raise HTTPException(403, "Utilisateur désactivé")
     if form.get("extra"):
         raise HTTPException(400, "Utilisez les options proposées ; les arguments libres ne sont pas autorisés")
     if any(p["owner"] == request.state.user["email"] and key.startswith("manual-") for key, p in processes.items()):
@@ -1071,10 +1160,19 @@ async def execute(account, actor):
             else:
                 cmd += ["--password" + side, account.get("pass" + side, "")]
         if account.get("bPretraitementIA") or not sync:
+            owner_record = next((u for u in load_config()['users'] if u['email'] == account['owner']), {})
+            account['_ai_identity'] = owner_record.get('ai_identity', account['owner'])
             state_file = CONFIG_FILE.with_name("ai_state.json")
+            def track_state(identity):
+                index_file = CONFIG_FILE.with_name('ai_state_owners.json')
+                index = read_json(index_file, {})
+                index[identity] = account['_ai_identity']
+                write_json(index_file, index)
             def read_state(identity):
+                track_state(identity)
                 return read_json(state_file, {}).get(identity, {})
             def save_state(identity, state):
+                track_state(identity)
                 data = read_json(state_file, {})
                 data[identity] = state
                 write_json(state_file, data)
@@ -1233,7 +1331,7 @@ def dispatch_due_accounts(now=None):
     config = load_config()
     for account in config["accounts"]:
         account_id = str(account["id"])
-        if account_due(account, now) and account_id not in processes and any(u["email"] == account.get("owner") for u in config["users"]):
+        if account_due(account, now) and account_id not in processes and any(u["email"] == account.get("owner") and u.get("enabled", True) for u in config["users"]):
             processes[account_id] = {"owner": account["owner"], "process": None, "cancelled": False}
             spawn(execute(copy.deepcopy(account), {"pseudo": "Planificateur"}))
 

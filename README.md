@@ -261,3 +261,14 @@ Les paramètres sont stockés dans `users[].ai_settings`. Une configuration util
 À la première lecture après mise à jour, les anciens paramètres et clés globaux sont déplacés vers l’utilisateur `ADMIN_EMAIL`, sans remplacer ses réglages individuels déjà existants. Ils ne sont pas copiés vers les autres utilisateurs. Ceux-ci démarrent avec les valeurs techniques par défaut et **sans clé** : renseigner leurs clés avant de relancer l’IA. Une clé absente empêche l’appel IA ; le comportement existant de poursuite du transfert avec avertissement reste applicable. Rspamd et les applications OAuth restent des services globaux distincts des API IA.
 
 Pour une facturation indépendante chez le fournisseur, les clés doivent appartenir aux comptes/projets de facturation correspondants : deux clés du même projet peuvent encore partager sa facturation et ses quotas externes. Les anciens compteurs globaux dans `ai_quotas.json` ne sont plus utilisés ; les nouveaux compteurs individuels commencent à zéro. Ne pas confondre ces compteurs locaux avec les consommations du fournisseur.
+
+
+### Gestion des utilisateurs
+
+Dans `/admin`, ouvrir un utilisateur dans **Gestion des utilisateurs** pour modifier son email/pseudo, le désactiver, le réactiver ou supprimer son compte et ses paramètres. La suppression demande une confirmation SweetAlert2 et efface les configurations IMAP, clés et réglages IA, listes d’expéditeurs, historique, quotas locaux et accès de connexion de cet utilisateur. Les autres utilisateurs restent inchangés. Les traces d’audit Docker et les sauvegardes existantes ne sont pas réécrites.
+
+La désactivation révoque les sessions, Magic Links et autorisations OAuth en attente, et bloque les nouveaux lancements, y compris par l’administrateur. La réactivation nécessite une nouvelle connexion et rend de nouveau éligibles les tâches RUNNING. Les actions sur un utilisateur occupé sont refusées : arrêter ses exécutions puis réessayer. Le compte principal `ADMIN_EMAIL` ne peut être ni désactivé ni supprimé ; son email reste géré par l’environnement. Un administrateur ne peut pas se supprimer ou se désactiver lui-même.
+
+Le changement d’email conserve les paramètres et rattache les configurations/journaux au nouvel email, révoque les anciens accès et conserve les compteurs de quotas. Le suivi antispam conserve son identité interne pour éviter de retraiter les mêmes messages. Les nouveaux comptes reçoivent une identité distincte même lorsqu’un email supprimé est réutilisé.
+
+Le fichier `ai_state_owners.json` indexe désormais le propriétaire des suivis antispam utilisés, afin de les purger à la suppression. Les anciens suivis de `ai_state.json` jamais réouverts depuis cette mise à jour ont des identifiants opaques et ne sont pas attribuables rétrospectivement : ils restent orphelins, sans être réutilisés par un compte recréé. Ils ne contiennent pas de clés API ni de paramètres IMAP.

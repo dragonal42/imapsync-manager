@@ -95,7 +95,7 @@ def test_admin_filter_and_users(env):
     response = admin.get("/dashboard?owner=bob@example.com")
     assert "BOB_PRIVATE" in response.text and "ALICE_PRIVATE" not in response.text
     assert admin.post("/admin/users", data={"email": "CHARLIE@example.com", "pseudo": "Charlie", "role": "admin"}).status_code == 303
-    assert main.load_config()["users"][-1] == {"email": "charlie@example.com", "pseudo": "Charlie", "role": "user"}
+    assert {k: main.load_config()["users"][-1][k] for k in ("email", "pseudo", "role")} == {"email": "charlie@example.com", "pseudo": "Charlie", "role": "user"}
     assert admin.post("/admin/users", data={"email": "charlie@example.com", "pseudo": "Charlie"}).status_code == 409
 
 

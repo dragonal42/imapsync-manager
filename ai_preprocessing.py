@@ -440,7 +440,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
             validity = client.response("UIDVALIDITY")[1][0]
             if not validity or not validity.isdigit():
                 raise PreprocessingError("UIDVALIDITY absent : suivi des messages impossible.")
-            identity = hashlib.sha256(json.dumps([account["owner"], account["host1"], account["user1"], folder, validity.decode()]).encode()).hexdigest()
+            identity = hashlib.sha256(json.dumps([account.get("_ai_identity", account["owner"]), account["host1"], account["user1"], folder, validity.decode()]).encode()).hexdigest()
             state = read_state(identity)
             if not dry and any(value in ("copying", "copied") for value in state.values()):
                 raise PreprocessingError("Déplacement précédent interrompu : vérifiez la source, _01-Arnaques et INBOX/_02-BlackList avant de réinitialiser le suivi IA.")
