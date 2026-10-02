@@ -23,6 +23,7 @@ import requests
 from ai_preprocessing import preprocess, PreprocessingError
 from run_logging import RunMetrics
 from sender_export import extract_senders
+from mail_verdict_service import SERVICE_ID, process_mailbox
 from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
 from sender_rules import KINDS, parse_import
@@ -203,6 +204,8 @@ def require_admin(request):
 
 
 def visible(user, item):
+    if item.get("kind") == "mail_verdict_service":
+        return user["role"] == "admin"
     return user["role"] == "admin" or item.get("owner") == user["email"]
 
 
@@ -236,7 +239,7 @@ async def lifespan(app):
     for run in config["runs"]:
         if run["status"] == "Synchronisation...":
             run.update(status="Interrompue", log=run.get("log", "") + "\nLe service a redémarré pendant cette exécution.")
-    for account in config["accounts"]:
+    for account in config["accounts"] + ([config["mail_verdict_service"]] if config.get("mail_verdict_service") else []):
         if account.get("status") == "Synchronisation...":
             account["status"] = "Interrompue"
     save_config(config)
@@ -327,6 +330,10 @@ def send_magic_link(email, token):
     message.set_content(f"Connectez-vous à IMAPSync Manager :\n{PUBLIC_URL}/auth/verify?token={token}\n\n"
                         "Ce lien personnel expire dans 15 minutes et ne peut être utilisé qu'une fois.\n"
                         "Si vous n'avez pas demandé ce lien, ignorez ce message.")
+    send_smtp_message(message)
+
+
+def send_smtp_message(message):
     mode = os.getenv("SMTP_SECURITY", "starttls")
     if mode not in {"starttls", "ssl"}:
         raise ValueError("SMTP_SECURITY doit être starttls ou ssl")
@@ -339,7 +346,8 @@ def send_magic_link(email, token):
             smtp.starttls(context=ssl.create_default_context())
         if os.getenv("SMTP_USER"):
             smtp.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
-        smtp.send_message(message)
+        if smtp.send_message(message):
+            raise RuntimeError("SMTP : destinataire refusé")
 
 
 async def deliver_link(email, token):
@@ -433,7 +441,9 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
     stats = {"users": len(config["users"]) if request.state.user["role"] == "admin" else 1,
              "accounts": len(config["accounts"]),
              "errors": sum(r.get("status") == "Erreur" and run_date(r) == today for r in config["runs"])}
-    if account_id:
+    if account_id == SERVICE_ID:
+        require_admin(request)
+    elif account_id:
         account_for(request, config, account_id)
     config["runs"] = [r for r in config["runs"] if show_history and run_date(r) and start <= run_date(r) <= end
                       and (not account_id or str(r.get("account_id", "")) == account_id)]
@@ -443,7 +453,7 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
     config.pop("sApiKeyMistral", None)
     config.pop("sApiKeyGemini", None)
     config["report_email"] = ""
-    return render(request, "dashboard.html", config=config, owner=owner, stats=stats, show_history=show_history, selected_account=account_id,
+    return render(request, "dashboard.html", config=config, owner=owner, stats=stats, service=config.get("mail_verdict_service", {}), show_history=show_history, selected_account=account_id,
                   date_from=start.isoformat(), date_to=end.isoformat(), timezone_name=str(local_zone()))
 
 
@@ -451,7 +461,7 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
 async def task_status(request: Request):
     config = load_config()
     return {"accounts": [{"id": str(a["id"]), "status": a.get("status", ""), "last_run": display_time(a.get("last_run", ""))}
-                         for a in config["accounts"] if visible(request.state.user, a)]}
+                         for a in config["accounts"] + ([config["mail_verdict_service"]] if request.state.user["role"] == "admin" and config.get("mail_verdict_service") else []) if visible(request.state.user, a)]}
 
 
 @app.get("/sender-lists/search")
@@ -616,6 +626,157 @@ async def manage_user(request: Request, action: str):
           new_email=target['email'] if action == 'edit' else None,
           enabled=target.get('enabled', True) if action == 'status' else None)
     return RedirectResponse('/admin', status_code=303)
+
+
+@app.get('/admin/mail-verdict')
+async def service_form(request: Request):
+    require_admin(request)
+    return render(request, 'mail_verdict_service.html', account=load_config().get('mail_verdict_service', {}))
+
+
+@app.post('/admin/mail-verdict/{action}')
+async def service_action(request: Request, action: str):
+    require_admin(request)
+    config = load_config()
+    account = copy.deepcopy(config.get('mail_verdict_service', {}))
+    form = await request.form()
+    if action == 'stop':
+        if SERVICE_ID in processes:
+            processes[SERVICE_ID]['cancelled'] = True
+        return RedirectResponse('/dashboard', status_code=303)
+    if SERVICE_ID in processes:
+        raise HTTPException(409, 'Arrêtez le service et attendez sa fin avant cette opération.')
+    if action == 'save':
+        for key in ('host1', 'user1', 'source_folder'):
+            value = str(form.get(key, '')).strip()
+            if not value or len(value) > 255 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+                raise HTTPException(400, 'Champ source invalide : ' + key)
+            account[key] = value
+        if not account['source_folder'].isascii():
+            raise HTTPException(400, 'Utilisez le nom IMAP ASCII du dossier.')
+        account['sync_interval'] = interval_from_form(form.get('sync_interval', 5))
+        try:
+            account['period_days'] = int(form.get('period_days', 5))
+            account['max_messages'] = int(form.get('max_messages', 50))
+            if not 0 <= account['period_days'] <= 36500 or not 1 <= account['max_messages'] <= 500:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(400, 'Période ou limite invalide')
+        mech = str(form.get('authmech1', 'PLAIN'))
+        if mech not in {'PLAIN', 'XOAUTH2'}:
+            raise HTTPException(400, 'Authentification invalide')
+        account['authmech1'] = mech
+        for key, field in (('pass1', 'pass1'), ('refresh1', 'refresh_oauth2_token1'), ('provider1', 'provider_oauth2_token1')):
+            if form.get(field):
+                account[key] = str(form[field])
+        if mech == 'PLAIN' and not account.get('pass1'):
+            raise HTTPException(400, 'Mot de passe IMAP requis')
+        if mech == 'XOAUTH2' and (account.get('provider1') not in OAUTH_CONFIG or not account.get('refresh1')):
+            raise HTTPException(400, 'Connectez le compte OAuth2')
+        engine = str(form.get('sMoteurIA', 'Mistral'))
+        if engine not in {'Mistral', 'Gemini'}:
+            raise HTTPException(400, 'Choisissez Mistral ou Gemini')
+        if form.get('use_rspamd') == 'on' and not config['rspamd_enabled']:
+            raise HTTPException(400, 'Activez Rspamd dans l’administration')
+        account.update(id=SERVICE_ID, owner=ADMIN_EMAIL, label='Service de diagnostic email', kind='mail_verdict_service',
+                       sMoteurIA=engine, use_rspamd=form.get('use_rspamd') == 'on', simulation=form.get('simulation') == 'on')
+        account.setdefault('schedule_state', 'PAUSED')
+        account.setdefault('status', 'En attente')
+        account.setdefault('last_run', 'Jamais')
+        config['mail_verdict_service'] = account
+    elif action == 'run':
+        if not account:
+            raise HTTPException(400, 'Configurez la source du service')
+        if not any(u['email'] == ADMIN_EMAIL and u.get('enabled', True) for u in config['users']):
+            raise HTTPException(400, 'Administrateur principal absent ou désactivé')
+        processes[SERVICE_ID] = {'owner': ADMIN_EMAIL, 'cancelled': False, 'process': None}
+        spawn(execute_mail_verdict(account, request.state.user))
+    elif action == 'schedule':
+        if not account:
+            raise HTTPException(400, 'Configurez le service avant son activation')
+        state = str(form.get('schedule_state', ''))
+        if state not in {'RUNNING', 'PAUSED'}:
+            raise HTTPException(400, 'État invalide')
+        config['mail_verdict_service']['schedule_state'] = state
+    elif action == 'clear':
+        config['runs'] = [r for r in config['runs'] if r.get('account_id') != SERVICE_ID]
+    elif action == 'reset':
+        config.pop('mail_verdict_service', None)
+    else:
+        raise HTTPException(404, 'Action inconnue')
+    if action != 'run':
+        save_config(config)
+    audit('MAIL_VERDICT_' + action.upper(), request.state.user)
+    return RedirectResponse('/dashboard', status_code=303)
+
+
+async def execute_mail_verdict(account, actor):
+    active = processes[SERVICE_ID]
+    run = {'id': secrets.token_hex(12), 'account_id': SERVICE_ID, 'owner': ADMIN_EMAIL, 'kind': 'mail_verdict_service',
+           'label': 'Service de diagnostic email', 'actor': actor['pseudo'], 'status': 'Synchronisation...',
+           'started': datetime.now(timezone.utc).isoformat(timespec='seconds'), 'log': ''}
+    config = load_config()
+    config['runs'].append(run)
+    config['mail_verdict_service'].update(status=run['status'], last_started=run['started'])
+    save_config(config)
+    lines, usage = [], {}
+    debug = bool(config.get('log_debug', False))
+    run['log_debug'] = debug
+    counts = None
+    def persist():
+        latest = load_config()
+        for current in latest['runs']:
+            if current['id'] == run['id']:
+                current.update(run)
+        save_config(latest)
+    def progress(value):
+        if isinstance(value, dict):
+            for key, count in value.get('usage', {}).items():
+                if type(count) is int:
+                    usage[key] = usage.get(key, 0) + count
+            return
+        if not debug and ('DEBUG]' in str(value) or not (str(value).startswith('[ERROR') or str(value).startswith('Résultat :'))):
+            return
+        lines.append('[' + datetime.now(timezone.utc).isoformat(timespec='seconds') + '] ' + str(value))
+        run['log'] = '\n'.join(lines)[-65536:]
+        persist()
+    try:
+        config = load_config()
+        settings = {**user_ai_settings(config, ADMIN_EMAIL), **{k:config[k] for k in RSPAMD_DEFAULTS}, 'owner': ADMIN_EMAIL}
+        quota_file = CONFIG_FILE.with_name('ai_quotas.json')
+        settings['_quota_read'] = lambda: read_json(quota_file, {})
+        settings['_quota_save'] = lambda data: write_json(quota_file, data)
+        token = ''
+        if account['authmech1'] == 'XOAUTH2':
+            token = await refresh_access_token(account, '1', [])
+            fresh = load_config()
+            fresh['mail_verdict_service']['refresh1'] = account['refresh1']
+            save_config(fresh)
+        state_file = CONFIG_FILE.with_name('mail_verdict_state.json')
+        counts = await process_mailbox(account, token, settings, settings.get('sApiKey' + account['sMoteurIA'], ''),
+                    os.getenv('SMTP_FROM', ''), active, lambda:read_json(state_file, {}),
+                    lambda data:write_json(state_file, data), send_smtp_message, progress)
+        run['status'] = 'Annulée' if active['cancelled'] else ('Succès avec avertissement' if counts['errors'] else 'Succès')
+    except asyncio.CancelledError:
+        run['status'] = 'Interrompue'
+        raise
+    except Exception as error:
+        run['status'] = 'Annulée' if active['cancelled'] else 'Erreur'
+        progress('[ERROR] ' + (str(error) if isinstance(error, PreprocessingError) else 'Échec de connexion ou de traitement. Aucun renvoi automatique en cas d’envoi ambigu.'))
+    finally:
+        run['finished'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        labels = {'analysed': 'Emails analysés', 'sent': 'Comptes rendus envoyés', 'deleted': 'Originaux supprimés', 'skipped': 'Emails ignorés', 'errors': 'Erreurs'}
+        progress('Résultat : ' + run['status'] + (' | ' + ' | '.join(labels[k] + ' : ' + str(v) for k, v in counts.items()) if counts else '')
+                 + (' | Tokens IA : ' + json.dumps(usage) if usage else ''))
+        config = load_config()
+        config['mail_verdict_service'].update(status=run['status'], last_run=run['finished'])
+        if counts and run['status'] == 'Succès' and not any(counts.values()):
+            config['runs'] = [r for r in config['runs'] if r['id'] != run['id']]
+        save_config(config)
+        processes.pop(SERVICE_ID, None)
+        if run['status'] in {'Erreur', 'Succès avec avertissement'}:
+            with CONFIG_FILE.with_name('daily_errors.log').open('a', encoding='utf-8') as report:
+                report.write('[' + run['finished'] + '] [' + ADMIN_EMAIL + '] Service diagnostic : ' + run['status'] + '\n')
 
 
 @app.get("/ai/settings")
@@ -1329,6 +1490,10 @@ def account_due(account, now=None):
 
 def dispatch_due_accounts(now=None):
     config = load_config()
+    service = config.get('mail_verdict_service')
+    if service and account_due(service, now) and SERVICE_ID not in processes and any(u['email'] == ADMIN_EMAIL and u.get('enabled', True) for u in config['users']):
+        processes[SERVICE_ID] = {'owner': ADMIN_EMAIL, 'cancelled': False, 'process': None}
+        spawn(execute_mail_verdict(copy.deepcopy(service), {'pseudo': 'Planificateur'}))
     for account in config["accounts"]:
         account_id = str(account["id"])
         if account_due(account, now) and account_id not in processes and any(u["email"] == account.get("owner") and u.get("enabled", True) for u in config["users"]):

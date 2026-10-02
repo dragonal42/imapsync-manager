@@ -263,6 +263,10 @@ Les paramètres sont stockés dans `users[].ai_settings`. Une configuration util
 Pour une facturation indépendante chez le fournisseur, les clés doivent appartenir aux comptes/projets de facturation correspondants : deux clés du même projet peuvent encore partager sa facturation et ses quotas externes. Les anciens compteurs globaux dans `ai_quotas.json` ne sont plus utilisés ; les nouveaux compteurs individuels commencent à zéro. Ne pas confondre ces compteurs locaux avec les consommations du fournisseur.
 
 
+### Service de diagnostic email expérimental
+
+Une tâche réservée aux administrateurs peut analyser une boîte dédiée et renvoyer à l'expéditeur un compte rendu `[DANGEREUX]`, `[SPAM]` ou `[SAIN]`, avant de supprimer l'original après acceptation SMTP. Elle démarre en PAUSED et en simulation. Voir le [guide de configuration et de reprise](docs/mail-verdict-service.md).
+
 ### Gestion des utilisateurs
 
 Dans `/admin`, ouvrir un utilisateur dans **Gestion des utilisateurs** pour modifier son email/pseudo, le désactiver, le réactiver ou supprimer son compte et ses paramètres. La suppression demande une confirmation SweetAlert2 et efface les configurations IMAP, clés et réglages IA, listes d’expéditeurs, historique, quotas locaux et accès de connexion de cet utilisateur. Les autres utilisateurs restent inchangés. Les traces d’audit Docker et les sauvegardes existantes ne sont pas réécrites.
