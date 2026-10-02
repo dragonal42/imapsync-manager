@@ -1,4 +1,4 @@
-{% extends 'base.html' %}{% block content %}<h1>Administration</h1>
+{% extends 'base.html' %}{% block content %}<h1>Administration</h1><section><h2>Service de diagnostic email</h2><a class="button" href="/admin/mail-verdict">Configurer le service de test</a></section>
 <section><h2>Antispam local Rspamd</h2>
 <form class="action-form" action="/rspamd/settings" method="post" data-toast="Paramètres Rspamd enregistrés">
 <label class="check-label"><input type="checkbox" name="rspamd_enabled" {% if config.rspamd_enabled %}checked{% endif %}> Activer le service Rspamd pour les utilisateurs</label>

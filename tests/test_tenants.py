@@ -255,6 +255,7 @@ def test_smtp_reuses_backend_settings(env, monkeypatch):
         monkeypatch.setenv(key, value)
     smtp = MagicMock()
     smtp.__enter__.return_value = smtp
+    smtp.send_message.return_value = {}
     factory = MagicMock(return_value=smtp)
     monkeypatch.setattr(main.smtplib, "SMTP", factory)
     main.send_magic_link("alice@example.com", "opaque-token")
