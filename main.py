@@ -23,10 +23,10 @@ import requests
 from ai_preprocessing import preprocess, PreprocessingError
 from run_logging import RunMetrics
 from sender_export import extract_senders
-from mail_verdict_service import SERVICE_ID, process_mailbox
+from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error
 from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
-from sender_rules import KINDS, parse_import
+from sender_rules import KINDS, parse_import, EMAIL
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -634,6 +634,79 @@ async def service_form(request: Request):
     return render(request, 'mail_verdict_service.html', account=load_config().get('mail_verdict_service', {}))
 
 
+def service_source(form, saved):
+    account = copy.deepcopy(saved)
+    account['id'] = SERVICE_ID
+    for name in ('host1', 'user1', 'source_folder'):
+        value = str(form.get(name, '')).strip()
+        if not value or len(value) > 255 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise HTTPException(400, 'Champ source invalide : ' + name)
+        account[name] = value
+    if not account['source_folder'].isascii():
+        raise HTTPException(400, 'Utilisez le nom IMAP ASCII du dossier.')
+    account['authmech1'] = str(form.get('authmech1', 'PLAIN'))
+    if account['authmech1'] not in {'PLAIN', 'XOAUTH2'}:
+        raise HTTPException(400, 'Authentification invalide')
+    for name, field in (('pass1', 'pass1'), ('refresh1', 'refresh_oauth2_token1'), ('provider1', 'provider_oauth2_token1')):
+        if form.get(field):
+            account[name] = str(form[field])
+    if account['authmech1'] == 'PLAIN' and not account.get('pass1'):
+        raise HTTPException(400, 'Mot de passe IMAP requis')
+    if account['authmech1'] == 'XOAUTH2' and (account.get('provider1') not in OAUTH_CONFIG or not account.get('refresh1')):
+        raise HTTPException(400, 'Connectez le compte OAuth2')
+    return account
+
+
+@app.post('/admin/mail-verdict/test/{kind}')
+async def service_test(request: Request, kind: str):
+    require_admin(request)
+    if kind not in {'imap', 'smtp'}:
+        raise HTTPException(404, 'Test inconnu')
+    if SERVICE_ID in processes:
+        raise HTTPException(409, 'Arrêtez le service et attendez sa fin avant un test.')
+    form = await request.form()
+    saved = load_config().get('mail_verdict_service', {})
+    try:
+        if kind == 'imap':
+            account = service_source(form, saved)
+            token = ''
+            if account['authmech1'] == 'XOAUTH2':
+                token = str(form.get('oauth2_token1', ''))
+                if not token:
+                    previous = account['refresh1']
+                    token = await refresh_access_token(account, '1', [])
+                    fresh = load_config()
+                    current = fresh.get('mail_verdict_service', {})
+                    if all(current.get(k) == account.get(k) for k in ('host1', 'user1', 'provider1')) and current.get('refresh1') == previous:
+                        current['refresh1'] = account['refresh1']
+                        save_config(fresh)
+            await asyncio.to_thread(test_imap_connection, account, token)
+            message = 'Connexion IMAP réussie et dossier accessible en lecture seule.'
+        else:
+            try:
+                smtp = smtp_settings(form, saved)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from None
+            recipient = str(form.get('smtp_test_to', request.state.user['email'])).strip()
+            if len(recipient) > 254 or not EMAIL.fullmatch(recipient):
+                raise HTTPException(400, 'Adresse du destinataire de test invalide.')
+            mail = EmailMessage()
+            mail['From'], mail['To'] = smtp['smtp_from'], recipient
+            mail['Subject'] = '[TEST] Service de diagnostic email'
+            mail['Auto-Submitted'] = 'auto-generated'
+            mail['X-IMAPSync-Verdict'] = 'TEST'
+            mail.set_content('Test SMTP du service de diagnostic email. Les comptes rendus seront envoyés avec cette adresse et ce serveur SMTP.')
+            await asyncio.to_thread(send_verdict_smtp, mail, smtp)
+            message = 'Email de test accepté par le serveur SMTP. Vérifiez sa réception, y compris les indésirables.'
+    except HTTPException:
+        raise
+    except Exception as error:
+        audit('MAIL_VERDICT_TEST_' + kind.upper() + '_FAILED', request.state.user, level='ERROR')
+        raise HTTPException(502, transport_error(error)) from None
+    audit('MAIL_VERDICT_TEST_' + kind.upper() + '_OK', request.state.user)
+    return {'message': message}
+
+
 @app.post('/admin/mail-verdict/{action}')
 async def service_action(request: Request, action: str):
     require_admin(request)
@@ -647,13 +720,11 @@ async def service_action(request: Request, action: str):
     if SERVICE_ID in processes:
         raise HTTPException(409, 'Arrêtez le service et attendez sa fin avant cette opération.')
     if action == 'save':
-        for key in ('host1', 'user1', 'source_folder'):
-            value = str(form.get(key, '')).strip()
-            if not value or len(value) > 255 or any(ord(c) < 32 or ord(c) == 127 for c in value):
-                raise HTTPException(400, 'Champ source invalide : ' + key)
-            account[key] = value
-        if not account['source_folder'].isascii():
-            raise HTTPException(400, 'Utilisez le nom IMAP ASCII du dossier.')
+        account = service_source(form, account)
+        try:
+            account.update(smtp_settings(form, account))
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
         account['sync_interval'] = interval_from_form(form.get('sync_interval', 5))
         try:
             account['period_days'] = int(form.get('period_days', 5))
@@ -662,17 +733,6 @@ async def service_action(request: Request, action: str):
                 raise ValueError()
         except (ValueError, TypeError):
             raise HTTPException(400, 'Période ou limite invalide')
-        mech = str(form.get('authmech1', 'PLAIN'))
-        if mech not in {'PLAIN', 'XOAUTH2'}:
-            raise HTTPException(400, 'Authentification invalide')
-        account['authmech1'] = mech
-        for key, field in (('pass1', 'pass1'), ('refresh1', 'refresh_oauth2_token1'), ('provider1', 'provider_oauth2_token1')):
-            if form.get(field):
-                account[key] = str(form[field])
-        if mech == 'PLAIN' and not account.get('pass1'):
-            raise HTTPException(400, 'Mot de passe IMAP requis')
-        if mech == 'XOAUTH2' and (account.get('provider1') not in OAUTH_CONFIG or not account.get('refresh1')):
-            raise HTTPException(400, 'Connectez le compte OAuth2')
         engine = str(form.get('sMoteurIA', 'Mistral'))
         if engine not in {'Mistral', 'Gemini'}:
             raise HTTPException(400, 'Choisissez Mistral ou Gemini')
@@ -753,9 +813,13 @@ async def execute_mail_verdict(account, actor):
             fresh['mail_verdict_service']['refresh1'] = account['refresh1']
             save_config(fresh)
         state_file = CONFIG_FILE.with_name('mail_verdict_state.json')
+        try:
+            smtp = smtp_settings(account, account)
+        except ValueError as error:
+            raise PreprocessingError('SMTP du service à configurer dans /admin/mail-verdict : ' + str(error)) from None
         counts = await process_mailbox(account, token, settings, settings.get('sApiKey' + account['sMoteurIA'], ''),
-                    os.getenv('SMTP_FROM', ''), active, lambda:read_json(state_file, {}),
-                    lambda data:write_json(state_file, data), send_smtp_message, progress)
+                    smtp['smtp_from'], active, lambda:read_json(state_file, {}),
+                    lambda data:write_json(state_file, data), lambda mail:send_verdict_smtp(mail, smtp), progress)
         run['status'] = 'Annulée' if active['cancelled'] else ('Succès avec avertissement' if counts['errors'] else 'Succès')
     except asyncio.CancelledError:
         run['status'] = 'Interrompue'

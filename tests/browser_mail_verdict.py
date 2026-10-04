@@ -15,6 +15,9 @@ def check():
         main.ADMIN_EMAIL = 'admin@example.com'
         main.PUBLIC_URL = 'https://testserver'
         main.save_config(main.load_config())
+        sent = []
+        main.test_imap_connection = lambda account, token: None
+        main.send_verdict_smtp = lambda mail, settings: sent.append((mail, settings))
         backend = client(main.ADMIN_EMAIL)
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, **({'channel': 'msedge'} if sys.platform == 'win32' else {}))
@@ -40,6 +43,18 @@ def check():
             page.locator('[name=host1]').fill('imap.example.org')
             page.locator('[name=user1]').fill('test@example.org')
             page.locator('#pass1').fill('test-secret')
+            page.locator('[name=smtp_host]').fill('smtp.example.org')
+            page.locator('[name=smtp_from]').fill('test@example.org')
+            page.locator('[name=smtp_user]').fill('test@example.org')
+            page.locator('[name=smtp_password]').fill('smtp-secret')
+            page.locator('[data-service-test=imap]').click()
+            page.get_by_text('Test IMAP réussi', exact=True).wait_for()
+            page.get_by_role('button', name='OK', exact=True).click()
+            page.locator('[data-service-test=smtp]').click()
+            page.get_by_text('Test SMTP réussi', exact=True).wait_for()
+            page.get_by_role('button', name='OK', exact=True).click()
+            assert sent[0][0]['From'] == 'test@example.org'
+            assert not main.load_config().get('mail_verdict_service')
             page.get_by_role('button', name='Enregistrer', exact=False).click()
             page.wait_for_url('**/dashboard')
             assert main.load_config()['mail_verdict_service']['schedule_state'] == 'PAUSED'
@@ -53,10 +68,10 @@ def check():
             main.save_config(config)
             page.wait_for_function('document.querySelector("#mail-verdict-service small").textContent.includes("14:34:56")')
             assert page.locator('[data-account-status="admin-mail-verdict"]').inner_text() == 'OK'
-            assert 'test-secret' not in page.content()
+            assert 'test-secret' not in page.content() and 'smtp-secret' not in page.content()
             context.close()
             browser.close()
-    print('Admin service browser test passed: defaults, OAuth controls, mobile layout, placement, save and pause.')
+    print('Admin service browser test passed: IMAP/SMTP test popups, defaults, OAuth controls, mobile layout, placement, save and pause.')
 
 
 if __name__ == '__main__':

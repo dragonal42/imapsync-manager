@@ -6,7 +6,19 @@
 <label>Mot de passe IMAP<input type="password" id="pass{{ side }}" name="pass{{ side }}" autocomplete="new-password" {% if account.get('authmech' ~ side) == 'XOAUTH2' %}disabled{% endif %}></label><p class="muted">En modification, laissez les secrets vides pour conserver les valeurs enregistrées.</p>
 <div class="actions"><button type="button" class="oauth" data-provider="google" data-target="oauth2_token{{ side }}" {% if account.get('authmech' ~ side) != 'XOAUTH2' %}disabled{% endif %}>Connecter Google</button><button type="button" class="oauth" data-provider="microsoft" data-target="oauth2_token{{ side }}" {% if account.get('authmech' ~ side) != 'XOAUTH2' %}disabled{% endif %}>Connecter Microsoft</button></div>
 <p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p><input type="hidden" id="oauth2_token{{ side }}" name="oauth2_token{{ side }}"><input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}">
+<button type="button" class="secondary" data-service-test="imap">Tester la connexion IMAP</button>
 </fieldset>{% endwith %}
+<section><h2>Envoi des comptes rendus — SMTP de la boîte source</h2><div class="grid">
+<label>Adresse email de la boîte source (expéditeur)<input type="email" name="smtp_from" value="{{ account.get('smtp_from', account.get('user1','')) }}" maxlength="254" required></label>
+<label>Serveur SMTP<input name="smtp_host" value="{{ account.get('smtp_host','') }}" maxlength="255" required></label>
+<label>Identifiant SMTP<input name="smtp_user" value="{{ account.get('smtp_user',account.get('user1','')) }}" maxlength="255" autocomplete="username"></label>
+<label>Mot de passe SMTP<input type="password" name="smtp_password" autocomplete="new-password"></label>
+<label>Port SMTP<input type="number" name="smtp_port" value="{{ account.get('smtp_port',587) }}" min="1" max="65535" required></label>
+<label>Sécurité<select name="smtp_security"><option value="starttls" {% if account.get('smtp_security','starttls') == 'starttls' %}selected{% endif %}>STARTTLS (TLS, généralement port 587)</option><option value="ssl" {% if account.get('smtp_security') == 'ssl' %}selected{% endif %}>SSL/TLS (généralement port 465)</option></select></label>
+</div><p class="muted">Renseignez le SMTP autorisé à envoyer avec l’adresse de cette boîte. Un mot de passe vide conserve celui enregistré. Selon le fournisseur, utilisez un mot de passe d’application pour le SMTP, même avec une source IMAP connectée via OAuth2.</p>
+<label>Destinataire de l’email de test<input type="email" name="smtp_test_to" value="{{ user.email }}" maxlength="254"></label>
+<button type="button" class="secondary" data-service-test="smtp">Envoyer un email de test SMTP</button>
+<p class="muted">Le test SMTP envoie réellement un email au destinataire indiqué, même si Simulation est cochée. Les tests utilisent les valeurs saisies et les secrets enregistrés laissés vides ; cliquez ensuite sur Enregistrer pour les appliquer au service.</p></section>
 <section><h2>Traitement</h2><div class="grid">
 <label>Dossier IMAP<input name="source_folder" value="{{ account.get('source_folder','INBOX') }}" required maxlength="255"></label>
 <label>Période en jours (0 = toutes les dates)<input type="number" name="period_days" value="{{ account.get('period_days',5) }}" min="0" max="36500" required></label>
@@ -15,6 +27,6 @@
 <label>Moteur IA<select name="sMoteurIA">{% for engine in ['Mistral','Gemini'] %}<option {% if account.get('sMoteurIA','Mistral') == engine %}selected{% endif %}>{{ engine }}</option>{% endfor %}</select></label>
 </div><label class="check"><input type="checkbox" name="use_rspamd" {% if account.get('use_rspamd') %}checked{% endif %}> Ajouter le score Rspamd avant l’analyse IA</label>
 <label class="check"><input type="checkbox" name="simulation" {% if account.get('simulation',True) %}checked{% endif %}> Simulation — analyser sans envoyer ni supprimer</label>
-<p>Les clés, modèles et quotas sont ceux de l’administrateur principal ; le SMTP est celui du backend. Le score numérique est fourni uniquement si Rspamd est activé. Sa simulation globale reste prioritaire. Les listes blanche/noire ne court-circuitent pas le diagnostic de ce service.</p>
+<p>Les clés, modèles et quotas sont ceux de l’administrateur principal ; les verdicts sont envoyés par le SMTP renseigné ci-dessus. Le score numérique est fourni uniquement si Rspamd est activé. Sa simulation globale reste prioritaire. Les listes blanche/noire ne court-circuitent pas le diagnostic de ce service.</p>
 <p>Un seul dossier, sans récursion. Les réponses automatiques et listes de diffusion sont ignorées. Une adresse From peut être usurpée : utilisez une boîte de soumission dédiée. Le message est supprimé par UID après acceptation SMTP, sans toucher aux autres messages marqués supprimés. En cas d’envoi ambigu, aucun renvoi automatique ; vérifier les traces SMTP.</p>
-<button class="save-button"><span class="save-icon">✓</span> Enregistrer</button></section></form><script defer src="/static/auth.js"></script>{% endblock %}
+<button class="save-button"><span class="save-icon">✓</span> Enregistrer</button></section></form><script defer src="/static/auth.js"></script><script defer src="/static/mail-verdict.js"></script>{% endblock %}

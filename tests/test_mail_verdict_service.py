@@ -152,7 +152,9 @@ def test_loop_prevention(header):
 
 def config_data():
     return {'host1':'mail','user1':'service@example.org','pass1':'secret','source_folder':'INBOX',
-            'sMoteurIA':'Mistral','simulation':'on','sync_interval':5}
+            'sMoteurIA':'Mistral','simulation':'on','sync_interval':5,
+            'smtp_host':'smtp.example.org','smtp_from':'service@example.org','smtp_user':'service@example.org',
+            'smtp_password':'smtp-secret','smtp_port':587,'smtp_security':'starttls'}
 
 
 def test_admin_routes_separate_task_and_private_logs(env, monkeypatch):
