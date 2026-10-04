@@ -263,6 +263,16 @@ Les paramètres sont stockés dans `users[].ai_settings`. Une configuration util
 Pour une facturation indépendante chez le fournisseur, les clés doivent appartenir aux comptes/projets de facturation correspondants : deux clés du même projet peuvent encore partager sa facturation et ses quotas externes. Les anciens compteurs globaux dans `ai_quotas.json` ne sont plus utilisés ; les nouveaux compteurs individuels commencent à zéro. Ne pas confondre ces compteurs locaux avec les consommations du fournisseur.
 
 
+### Limites annoncées par les fournisseurs IA
+
+Les en-têtes numériques `x-ratelimit-limit-*` et `x-ratelimit-remaining-*` sont lus sur les réponses valides, y compris HTTP 200. Lorsque les requêtes restantes par minute sont à 0, 1 ou 2 (ou les tokens/minute à 0), le prochain appel attend le reset annoncé, sinon 60 secondes. Le résultat déjà reçu reste utilisable et ses tokens sont comptabilisés.
+
+Un HTTP 429 Mistral avec code `1300` n'est pas réessayé trois fois dans la même exécution. Ce code seul ne prouve pas un quota journalier : sans précision, il impose une pause courte pour les appels suivants (reset/Retry-After annoncé, sinon 60 secondes). Si `limit-req-minute=0` accompagne ce code, le modèle est considéré indisponible jusqu'au prochain minuit UTC par protection, sans prétendre que le fournisseur rétablira son accès à cette date. Un quota journalier/mensuel explicitement à zéro attend le reset correspondant, avec prochain jour/mois par défaut. Des crédits explicitement épuisés (notamment Gemini) suspendent les appels jusqu'au prochain jour ; régler la facturation reste nécessaire.
+
+Les suspensions sont conservées dans `ai_quotas.json`, isolées par utilisateur, moteur, modèle et empreinte de clé (aucune clé en clair dans ce fichier). Un redémarrage ne les efface pas ; une nouvelle clé possède son propre état. Les logs indiquent le motif et l'heure du prochain essai autorisé. Les transferts imapsync conservent leur poursuite avec avertissement IA ; le service de verdict conserve les messages sans réponse ni suppression et arrête son passage, sans déduire un verdict SAIN du seul score Rspamd.
+
+Les quotas locaux de l'IHM restent modifiables : les aligner sur les limites **réelles de son compte/modèle**. RPM=1 / RPD=1 est possible comme restriction volontaire, mais n'est pas présenté comme le quota officiel du plan gratuit. Mistral documente notamment RPS, tokens/minute et tokens/mois, avec limites au niveau de l'organisation : consulter la [page Limits](https://admin.mistral.ai/plateforme/limits) et son [aide sur les limites](https://help.mistral.ai/en/articles/698531-why-am-i-hitting-api-rate-limits-and-how-do-i-increase-them).
+
 ### Service de diagnostic email expérimental
 
 Une tâche réservée aux administrateurs peut analyser une boîte dédiée et renvoyer à l'expéditeur un compte rendu `[DANGEREUX]`, `[SPAM]` ou `[SAIN]`, avant de supprimer l'original après acceptation SMTP. Elle démarre en PAUSED et en simulation. Voir le [guide de configuration et de reprise](docs/mail-verdict-service.md).
