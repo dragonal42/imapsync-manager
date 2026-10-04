@@ -21,6 +21,7 @@ def rate_clock(monkeypatch):
         def now(tz=None):
             return datetime.fromtimestamp(clock[0], timezone.utc)
     monkeypatch.setattr(ai_quotas, 'datetime', QuotaDateTime)
+    monkeypatch.setattr(ai_quotas, '_provider_memory', {})
     async def sleep(delay):
         clock[0] += delay
         await asyncio.sleep(0)

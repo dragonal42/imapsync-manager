@@ -277,6 +277,9 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     progress({'usage': error.usage})
                 if active['cancelled']:
                     raise
+                if getattr(error, 'quota_exhausted', False) or getattr(error, 'no_retry', False):
+                    progress('[ERROR] IA indisponible : arrêt du diagnostic pour ce passage ; aucun résultat SAIN déduit du seul score Rspamd. Messages restants conservés.')
+                    break
         return counts
     finally:
         if client:
