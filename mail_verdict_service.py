@@ -7,6 +7,7 @@ import json
 import re
 import ssl
 import time
+import smtplib
 from datetime import datetime, timedelta, timezone
 from email import policy
 from email.message import EmailMessage
@@ -15,12 +16,94 @@ from email.utils import format_datetime, make_msgid, parseaddr
 
 from ai_preprocessing import PreprocessingError, checked, quote_mailbox, compact_message, provider_call, MAX_MESSAGE
 from rspamd_client import scan, RspamdError
-from sender_rules import sender_address
+from sender_rules import sender_address, EMAIL
 
 SERVICE_ID = 'admin-mail-verdict'
 LABELS = {'scam': ('DANGEREUX', '#b91c1c', 'Suspicion de fraude ou de hameçonnage.'),
           'spam': ('SPAM', '#b45309', 'Message indésirable ou publicitaire.'),
           'legitimate': ('SAIN', '#15803d', 'Aucun signal suspect identifié par cette analyse.')}
+
+
+def smtp_settings(form, saved):
+    """Dedicated service SMTP. Never fall back to the backend SMTP environment."""
+    result = {}
+    for name in ('smtp_host', 'smtp_user', 'smtp_from'):
+        value = str(form.get(name, '')).strip()
+        if len(value) > 255 or any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ValueError('Champ SMTP invalide : ' + name)
+        result[name] = value
+    if not result['smtp_host'] or not EMAIL.fullmatch(result['smtp_from']):
+        raise ValueError('Renseignez le serveur SMTP et l’adresse email de la boîte source.')
+    try:
+        result['smtp_port'] = int(form.get('smtp_port', 587))
+        if not 1 <= result['smtp_port'] <= 65535:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise ValueError('Port SMTP invalide (1 à 65535).') from None
+    result['smtp_security'] = str(form.get('smtp_security', 'starttls'))
+    if result['smtp_security'] not in {'ssl', 'starttls'}:
+        raise ValueError('Choisissez SSL/TLS ou STARTTLS pour le SMTP.')
+    result['smtp_password'] = str(form.get('smtp_password', '')) or saved.get('smtp_password', '')
+    if result['smtp_user'] and not result['smtp_password']:
+        raise ValueError('Mot de passe SMTP requis pour cet identifiant.')
+    return result
+
+
+def send_verdict_smtp(message, settings):
+    mode = settings['smtp_security']
+    if mode not in {'ssl', 'starttls'}:
+        raise ValueError('Configuration SMTP du service invalide.')
+    factory = smtplib.SMTP_SSL if mode == 'ssl' else smtplib.SMTP
+    options = {'timeout': 20}
+    if mode == 'ssl':
+        options['context'] = ssl.create_default_context()
+    with factory(settings['smtp_host'], settings['smtp_port'], **options) as smtp:
+        if mode == 'starttls':
+            smtp.starttls(context=ssl.create_default_context())
+        if settings['smtp_user']:
+            smtp.login(settings['smtp_user'], settings['smtp_password'])
+        if smtp.send_message(message, from_addr=settings['smtp_from']):
+            raise smtplib.SMTPRecipientsRefused({})
+
+
+def test_imap_connection(account, token):
+    """Read-only connection/folder check: no fetching, sending, flags or deletion."""
+    client = imaplib.IMAP4_SSL(account['host1'], port=993, ssl_context=ssl.create_default_context(), timeout=20)
+    try:
+        if account['authmech1'] == 'XOAUTH2':
+            auth = ('user=' + account['user1'] + '\x01auth=Bearer ' + token + '\x01\x01').encode()
+            checked(client.authenticate('XOAUTH2', lambda _: auth))
+        else:
+            checked(client.login(account['user1'], account['pass1']))
+        checked(client.select(quote_mailbox(account['source_folder']), readonly=True))
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+def transport_error(error):
+    """Useful diagnostics without echoing server text containing credentials."""
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return f'Authentification SMTP refusée (code {error.smtp_code}). Vérifiez login et mot de passe/app password.'
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        return 'Destinataire refusé par le serveur SMTP. Vérifiez son adresse et les droits de relais.'
+    if isinstance(error, smtplib.SMTPSenderRefused):
+        return f'Adresse d’envoi refusée par le serveur SMTP (code {error.smtp_code}). Vérifiez l’adresse et les droits d’envoi.'
+    if isinstance(error, smtplib.SMTPResponseException):
+        return f'Commande SMTP refusée (code {error.smtp_code}). Vérifiez la configuration du serveur.'
+    if isinstance(error, smtplib.SMTPNotSupportedError):
+        return 'Le serveur SMTP ne prend pas en charge le mode TLS ou l’authentification sélectionné.'
+    if isinstance(error, ssl.SSLError):
+        return 'Échec TLS/certificat. Vérifiez le nom du serveur, le port et le mode SSL/TLS ou STARTTLS.'
+    if isinstance(error, TimeoutError):
+        return 'Délai de connexion dépassé. Vérifiez serveur, port et accès réseau.'
+    if isinstance(error, OSError):
+        return 'Connexion réseau impossible. Vérifiez le nom du serveur, son port et le réseau Docker.'
+    if isinstance(error, (imaplib.IMAP4.error, PreprocessingError)):
+        return 'Connexion/authentification IMAP ou ouverture du dossier refusée. Vérifiez serveur, identifiant, mot de passe/OAuth et dossier.'
+    return 'Échec de connexion ou d’envoi. Vérifiez la configuration et les accès au service.'
 
 
 def recipient_for(raw, mailbox, smtp_from):
@@ -186,7 +269,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                 progress(f'UID {uid.decode()} : réponse acceptée par SMTP ; original supprimé.')
             except Exception as error:
                 counts['errors'] += 1
-                detail = str(error) if isinstance(error, (PreprocessingError, RspamdError)) else 'Échec IMAP/SMTP/Rspamd ; vérifier le service. Message conservé ou suppression à reprendre.'
+                detail = str(error) if isinstance(error, (PreprocessingError, RspamdError)) else transport_error(error)
                 progress(f'[ERROR] UID {uid.decode()} : {detail}')
                 for line in getattr(error, 'debug', '').splitlines():
                     progress('[ERROR IA DEBUG] ' + line)
