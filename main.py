@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import requests
-from ai_preprocessing import preprocess, PreprocessingError
+from ai_preprocessing import preprocess, PreprocessingError, TECHNICAL_FOLDER_EXCLUDE
 from run_logging import RunMetrics
 from sender_export import extract_senders
 from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error
@@ -1448,6 +1448,7 @@ async def execute(account, actor):
         elif not sync:
             status = "Succès"
         else:
+            cmd += ["--exclude", TECHNICAL_FOLDER_EXCLUDE]
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             active["process"] = process
             # Keep a bounded tail; never expose passwords or OAuth tokens in history.

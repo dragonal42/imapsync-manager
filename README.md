@@ -279,6 +279,8 @@ Une tâche réservée aux administrateurs peut analyser une boîte dédiée et r
 
 ### Gestion des utilisateurs
 
+Les transferts automatiques/manuels et le prétraitement antispam excluent le dossier technique `INBOX.dovecot.sieve` (également avec séparateur `/` ou sans préfixe `INBOX`). Certains serveurs Dovecot exposent ce fichier Sieve dans leur liste de dossiers alors qu'il ne peut pas être ouvert comme une boîte mail. Aucun fichier source n'est supprimé par cette exclusion ; les autres erreurs de sélection restent signalées.
+
 Dans `/admin`, ouvrir un utilisateur dans **Gestion des utilisateurs** pour modifier son email/pseudo, le désactiver, le réactiver ou supprimer son compte et ses paramètres. La suppression demande une confirmation SweetAlert2 et efface les configurations IMAP, clés et réglages IA, listes d’expéditeurs, historique, quotas locaux et accès de connexion de cet utilisateur. Les autres utilisateurs restent inchangés. Les traces d’audit Docker et les sauvegardes existantes ne sont pas réécrites.
 
 La désactivation révoque les sessions, Magic Links et autorisations OAuth en attente, et bloque les nouveaux lancements, y compris par l’administrateur. La réactivation nécessite une nouvelle connexion et rend de nouveau éligibles les tâches RUNNING. Les actions sur un utilisateur occupé sont refusées : arrêter ses exécutions puis réessayer. Le compte principal `ADMIN_EMAIL` ne peut être ni désactivé ni supprimé ; son email reste géré par l’environnement. Un administrateur ne peut pas se supprimer ou se désactiver lui-même.

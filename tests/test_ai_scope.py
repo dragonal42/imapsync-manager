@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import re
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,6 +10,35 @@ import main
 from run_logging import RunMetrics
 from test_ai_preprocessing import Mailbox
 from test_tenants import env
+
+
+@pytest.mark.parametrize('delimiter', ['.', '/'])
+def test_dovecot_sieve_is_not_an_analysis_mailbox(delimiter):
+    allowed = ['INBOX', f'INBOX{delimiter}Sieve', f'INBOX{delimiter}Clients{delimiter}sieve']
+    technical = f'INBOX{delimiter}dovecot{delimiter}sieve'
+    entries = [f'() "{delimiter}" "{name}"'.encode() for name in allowed + [technical]]
+    assert set(ai.inbox_folders(entries)[0]) == set(allowed)
+    assert re.search(ai.TECHNICAL_FOLDER_EXCLUDE, technical)
+    assert re.search(ai.TECHNICAL_FOLDER_EXCLUDE, f'dovecot{delimiter}sieve')
+    assert not any(re.search(ai.TECHNICAL_FOLDER_EXCLUDE, name) for name in allowed)
+
+
+@pytest.mark.parametrize('manual', [False, True])
+@pytest.mark.parametrize('returncode', [0, 117])
+def test_transfer_excludes_only_technical_sieve_and_keeps_real_errors(env, monkeypatch, manual, returncode):
+    account = copy.deepcopy(main.load_config()['accounts'][0])
+    if manual:
+        account['id'] = 'manual-sieve-test'
+    completed = type('Process', (), {'returncode': returncode, 'wait': AsyncMock(),
+        'stdout': type('Output', (), {'read': AsyncMock(side_effect=[b'Messages transferred : 12\n', b''])})()})()
+    process = AsyncMock(return_value=completed)
+    monkeypatch.setattr(main.asyncio, 'create_subprocess_exec', process)
+    main.processes[account['id']] = {'cancelled': False, 'process': None}
+    asyncio.run(main.execute(account, {'pseudo': 'Alice'}))
+    args = process.call_args.args
+    assert args[-2:] == ('--exclude', ai.TECHNICAL_FOLDER_EXCLUDE)
+    assert not any(re.search(ai.TECHNICAL_FOLDER_EXCLUDE, folder) for folder in ['INBOX.Sent', 'INBOX.Trash', 'INBOX.spam'])
+    assert main.load_config()['runs'][-1]['status'] == ('Succès' if returncode == 0 else 'Erreur')
 
 
 @pytest.mark.parametrize('delimiter', ['.', '/'])
