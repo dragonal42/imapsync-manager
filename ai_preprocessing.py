@@ -21,6 +21,11 @@ from sender_rules import sender_address, sender_decision
 from rspamd_client import scan as scan_rspamd, RspamdError
 
 
+# Dovecot can expose its personal Sieve script as a non-mailbox LIST entry.
+# Keep this anchored so real folders named Sieve remain eligible.
+TECHNICAL_FOLDER_EXCLUDE = r'(?i)^(?:INBOX[./])?dovecot[./]sieve$'
+
+
 class PreprocessingError(Exception):
     """Only fixed, non-sensitive messages may be exposed in execution logs."""
 
@@ -381,7 +386,7 @@ def inbox_folders(entries, root_name="INBOX"):
     excluded = {'sent', 'trash', 'junk', 'drafts', 'archive', 'spam', '_01-arnaques', '_02-blacklist', '_03-suspects'}
     folders = []
     for name, _, noselect in rows:
-        if noselect:
+        if noselect or re.search(TECHNICAL_FOLDER_EXCLUDE, name):
             continue
         if name.upper() == root_name.upper():
             folders.append(name)
