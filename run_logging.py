@@ -5,12 +5,14 @@ import re
 def token_usage(engine, response):
     if not isinstance(response, dict):
         return {}
-    usage = response.get('usage' if engine == 'Mistral' else 'usageMetadata') or {}
+    usage = response.get('usageMetadata' if engine == 'Gemini' else 'usage') or {}
     if not isinstance(usage, dict):
         return {}
     names = ({'input': 'prompt_tokens', 'output': 'completion_tokens', 'total': 'total_tokens'}
              if engine == 'Mistral' else {'input': 'promptTokenCount', 'output': 'candidatesTokenCount',
                  'total': 'totalTokenCount', 'cached': 'cachedContentTokenCount', 'reasoning': 'thoughtsTokenCount'})
+    if engine in ('Claude', 'OpenAI'):
+        names = {'input': 'input_tokens', 'output': 'output_tokens', 'total': 'total_tokens'}
     result = {key: usage[name] for key, name in names.items()
               if type(usage.get(name)) is int and usage[name] >= 0}
     if engine == 'Mistral':
@@ -18,6 +20,22 @@ def token_usage(engine, response):
         cached = details.get('cached_tokens') if isinstance(details, dict) else None
         if type(cached) is int and cached >= 0:
             result['cached'] = cached
+    if engine == 'Claude' and 'input' in result:
+        cached = usage.get('cache_read_input_tokens', 0)
+        written = usage.get('cache_creation_input_tokens', 0)
+        if type(cached) is int and cached >= 0 and type(written) is int and written >= 0:
+            result['input'] += cached + written
+            if cached:
+                result['cached'] = cached
+    if engine == 'OpenAI':
+        for field, key, name in [('input_tokens_details', 'cached', 'cached_tokens'),
+                                 ('output_tokens_details', 'reasoning', 'reasoning_tokens')]:
+            details = usage.get(field)
+            count = details.get(name) if isinstance(details, dict) else None
+            if type(count) is int and count >= 0:
+                result[key] = count
+    if engine in ('Claude', 'OpenAI') and 'input' in result and 'output' in result:
+        result.setdefault('total', result['input'] + result['output'])
     return result
 
 

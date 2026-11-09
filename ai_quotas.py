@@ -75,7 +75,9 @@ def provider_feedback(engine, response):
         if not isinstance(error, dict):
             error = {}
         message = str(error.get('message', '')).lower()
-        if re.search(r'(?:prepayment credits|credits|balance).*(?:depleted|exhausted|insufficient)', message):
+        if engine == 'OpenAI' and error.get('code') == 'insufficient_quota':
+            reason, until, durable, no_retry = 'quota OpenAI épuisé : vérifier crédits et facturation', tomorrow, True, True
+        elif re.search(r'(?:prepayment credits|credits|balance).*(?:depleted|exhausted|insufficient)', message):
             reason, until, durable, no_retry = 'crédits fournisseur épuisés : vérifier la facturation', tomorrow, True, True
         elif engine == 'Mistral' and str(error.get('code')) == '1300':
             no_retry = True  # Fail this execution immediately; daily semantics are unconfirmed.

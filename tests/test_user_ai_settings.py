@@ -47,7 +47,7 @@ def test_user_and_admin_edit_isolation_and_secret_retention(env):
     assert personal('bob@example.com')['sApiKeyGemini'] == 'bob-secret'
 
 
-@pytest.mark.parametrize('engine', ['Mistral','Gemini'])
+@pytest.mark.parametrize('engine', ['Mistral','Gemini','Claude','OpenAI'])
 def test_execute_uses_owner_even_when_admin_launches(env, monkeypatch, engine):
     admin = client('admin@example.com')
     prefix = engine.lower()
@@ -68,13 +68,14 @@ def test_execute_uses_owner_even_when_admin_launches(env, monkeypatch, engine):
     assert 'alice@example.com-secret' not in str(main.load_config()['runs'])
 
 
-def test_manual_uses_session_owner_ignoring_posted_owner(env, monkeypatch):
-    client('alice@example.com').post('/ai/settings',data={'sApiKeyMistral':'alice-secret'})
+@pytest.mark.parametrize('engine', ['Mistral','Claude','OpenAI'])
+def test_manual_uses_session_owner_ignoring_posted_owner(env, monkeypatch, engine):
+    client('alice@example.com').post('/ai/settings',data={'sApiKey'+engine:'alice-secret'})
     seen = []
     async def preprocess(account, token, key, *args):
         seen.append((account['owner'],key))
     monkeypatch.setattr(main,'preprocess',preprocess)
-    response = client('alice@example.com').post('/cgi-bin/imapsync',data={'action':'ai','owner':'admin@example.com','host1':'mail','user1':'alice','password1':'secret','sMoteurIA':'Mistral'})
+    response = client('alice@example.com').post('/cgi-bin/imapsync',data={'action':'ai','owner':'admin@example.com','host1':'mail','user1':'alice','password1':'secret','sMoteurIA':engine})
     assert response.status_code == 200
     assert seen == [('alice@example.com','alice-secret')]
 

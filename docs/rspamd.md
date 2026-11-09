@@ -24,10 +24,10 @@ changer ni l’adresse interne, ni les seuils, ni lever la simulation obligatoir
 
 ## Trois parcours
 
-- IA seule : Mistral ou Gemini sans prétri, fonctionnement existant.
+- IA seule : Mistral, Gemini, Claude ou OpenAI sans prétri, fonctionnement existant.
 - Local seul : Rspamd, aucune clé IA nécessaire. Score inférieur au seuil bas : conservé.
   Score supérieur ou égal au seuil haut : suspect. Entre les deux : conservé comme incertain.
-- Prétri puis IA : sélectionner Mistral/Gemini et cocher le prétri Rspamd. Seuls les scores
+- Prétri puis IA : sélectionner un moteur IA et cocher le prétri Rspamd. Seuls les scores
   intermédiaires sont envoyés au fournisseur, regroupés selon sa taille de lot globale.
 
 Les règles blanche/noire s’appliquent avant Rspamd. La période, les messages non lus,

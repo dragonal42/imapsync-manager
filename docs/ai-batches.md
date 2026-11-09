@@ -1,4 +1,4 @@
-Les tailles de lots sont désormais individuelles : **Mes paramètres IA**, ou **Administration → Paramètres IA par utilisateur**. Chaque propriétaire possède son réglage Mistral et son réglage Gemini ; les tâches utilisent ceux de leur propriétaire. Voir la migration dans le README.
+Les tailles de lots sont désormais individuelles : **Mes paramètres IA**, ou **Administration → Paramètres IA par utilisateur**. Chaque propriétaire possède un réglage pour chacun des quatre fournisseurs ; les tâches utilisent ceux de leur propriétaire. Voir la migration dans le README.
 
 # Analyse IA par lots
 
