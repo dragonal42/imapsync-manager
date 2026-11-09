@@ -13,6 +13,8 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import format_datetime, make_msgid, parseaddr
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 from ai_preprocessing import PreprocessingError, checked, quote_mailbox, compact_message, provider_call, MAX_MESSAGE
 from rspamd_client import scan, RspamdError
@@ -117,6 +119,89 @@ def recipient_for(raw, mailbox, smtp_from):
             or message.get('Return-Path', '').strip() == '<>'):
         return None
     return sender
+
+
+class VisibleEmail(HTMLParser):
+    """Extract readable text and anchor labels without rendering or fetching resources."""
+    OMIT = {'head', 'script', 'style', 'template', 'noscript', 'svg'}
+    BLOCK = {'p', 'div', 'br', 'tr', 'td', 'li', 'h1', 'h2', 'h3', 'section'}
+
+    def __init__(self):
+        super().__init__()
+        self.text = []
+        self.omitted = []
+        self.links = []
+        self.anchor = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.OMIT:
+            self.omitted.append(tag)
+        if self.omitted:
+            return
+        if tag in self.BLOCK:
+            self.text.append(' ')
+        if tag == 'a':
+            self.anchor = None
+            try:
+                url = urlsplit(dict(attrs).get('href') or '')
+                if url.scheme in {'http', 'https'} and url.hostname:
+                    self.anchor = (url.hostname[:253], [])
+            except ValueError:
+                pass
+
+    def handle_endtag(self, tag):
+        if self.omitted:
+            if tag == self.omitted[-1]:
+                self.omitted.pop()
+            return
+        if tag == 'a' and self.anchor:
+            domain, chunks = self.anchor
+            label = ' '.join(''.join(chunks).split())[:100]
+            if label and len(self.links) < 10:
+                self.links.append({'label': label, 'domain': domain})
+            self.anchor = None
+        if tag in self.BLOCK:
+            self.text.append(' ')
+
+    def handle_data(self, data):
+        if not self.omitted:
+            self.text.append(data)
+            if self.anchor:
+                self.anchor[1].append(data)
+
+
+def verdict_evidence(raw):
+    evidence = compact_message(raw)
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    parser = VisibleEmail()
+    part = message.get_body(preferencelist=('html', 'plain'))
+    excerpt = ''
+    if part:
+        payload = part.get_payload(decode=True) or b''
+        try:
+            content = payload[:131072].decode(part.get_content_charset() or 'utf-8', errors='replace')
+        except LookupError:
+            content = payload[:131072].decode('utf-8', errors='replace')
+        if part.get_content_type() == 'text/html':
+            parser.feed(content)
+            parser.close()
+            excerpt = ''.join(parser.text)
+        else:
+            excerpt = content
+    # Keep homoglyphs intact. Remove raw links from the excerpt; destinations
+    # are represented separately by hostnames, without paths or query tokens.
+    excerpt = re.sub(r'https?://[^\s<>"]+', '[lien]', excerpt, flags=re.I)
+    domains = set()
+    for value in evidence.pop('urls'):
+        try:
+            host = urlsplit(value).hostname
+            if host:
+                domains.add(host[:253])
+        except ValueError:
+            continue
+    evidence.update(visible_excerpt=' '.join(excerpt.split())[:1000],
+                    link_domains=sorted(domains)[:15], labelled_links=parser.links)
+    return evidence
 
 
 def report_message(raw, recipient, smtp_from, verdict, score=None):
@@ -242,7 +327,12 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     if not key:
                         raise PreprocessingError('Clé IA de l’administrateur absente.')
                     progress(f'UID {uid.decode()} : appel {engine} | modèle : {settings.get(engine.lower() + "_model", "défaut du fournisseur")}.')
-                    verdict = await provider_call(settings, key, compact_message(raw), active, call, progress, engine)
+                    evidence = verdict_evidence(raw)
+                    progress(f'UID {uid.decode()} : contexte IA | extrait : {len(evidence["visible_excerpt"])} caractères'
+                             f' | domaines : {len(evidence["link_domains"])} | liens libellés : {len(evidence["labelled_links"])}.')
+                    verdict = await provider_call(settings, key, evidence, active, call, progress, engine)
+                    progress(f'UID {uid.decode()} : réponse {engine} | verdict : {verdict}'
+                             f' | {getattr(verdict, "diagnostic", "réponse validée")}.')
                     progress({'usage': getattr(verdict, 'usage', {})})
                     counts['analysed'] += 1
                     if verdict not in LABELS:

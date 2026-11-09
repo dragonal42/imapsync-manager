@@ -209,3 +209,22 @@ def test_runner_uses_principal_keys_and_keeps_service_logs(env,monkeypatch):
     run=main.load_config()['runs'][-1]
     assert run['status']=='Succès' and run['kind']=='mail_verdict_service'
     assert 'admin-key' not in run['log']
+
+def test_verdict_evidence_keeps_brand_homoglyphs_and_uses_link_domains():
+    from email.message import EmailMessage
+    message = EmailMessage()
+    message['From'] = 'example@example.org'
+    message['Subject'] = 'Votre année se poursuit'
+    message.set_content('Version texte')
+    message.add_alternative(
+        '<head><style>NOT_VISIBLE</style></head><p><span>рrimе</span> <span>vidео</span></p>'
+        '<p>Votre accès annuel : 69,90 €</p><script>NOT_VISIBLE</script>'
+        '<a href="https://example.net/private?token=SECRET">Consulter mon espace</a>'
+        '<img src="https://images.example.org/tracker?token=SECRET">',
+        subtype='html', cte='quoted-printable')
+    evidence = service.verdict_evidence(message.as_bytes())
+    assert 'рrimе vidео' in evidence['visible_excerpt']
+    assert '69,90 €' in evidence['visible_excerpt']
+    assert evidence['labelled_links'] == [{'label': 'Consulter mon espace', 'domain': 'example.net'}]
+    assert 'example.net' in evidence['link_domains']
+    assert 'SECRET' not in str(evidence) and 'NOT_VISIBLE' not in str(evidence)

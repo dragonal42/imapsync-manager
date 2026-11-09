@@ -70,6 +70,11 @@ class BatchClassification(dict):
 def request_options(metadata):
     if "emails" in metadata:
         return BATCH_PROMPT, BATCH_SCHEMA, 128 + 128 * len(metadata["emails"])
+    if "visible_excerpt" in metadata:
+        return (PROMPT + ' Compare the claimed brand, sender and link domains. '
+                'Look for mixed-script brand imitations, unexpected subscription charges and mismatched calls to action. '
+                'Passing email authentication does not establish that the content is safe. '
+                'Do not treat a CDN domain or a charge alone as proof of fraud.', SCHEMA, 128)
     return PROMPT, SCHEMA, 128
 
 
