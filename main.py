@@ -460,14 +460,14 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
     for key in AI_SECRET_KEYS:
         config.pop(key, None)
     config["report_email"] = ""
-    return render(request, "dashboard.html", config=config, owner=owner, stats=stats, service=config.get("mail_verdict_service", {}), show_history=show_history, selected_account=account_id,
+    return render(request, "dashboard.html", config=config, owner=owner, stats=stats, active_ids=set(processes), service=config.get("mail_verdict_service", {}), show_history=show_history, selected_account=account_id,
                   date_from=start.isoformat(), date_to=end.isoformat(), timezone_name=str(local_zone()))
 
 
 @app.get("/api/task-status")
 async def task_status(request: Request):
     config = load_config()
-    return {"accounts": [{"id": str(a["id"]), "status": a.get("status", ""), "last_run": display_time(a.get("last_run", ""))}
+    return {"accounts": [{"id": str(a["id"]), "running": a["id"] in processes, "status": a.get("status", ""), "last_run": display_time(a.get("last_run", ""))}
                          for a in config["accounts"] + ([config["mail_verdict_service"]] if request.state.user["role"] == "admin" and config.get("mail_verdict_service") else []) if visible(request.state.user, a)]}
 
 

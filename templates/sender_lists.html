@@ -2,13 +2,21 @@
 <h1>Mes listes d’expéditeurs</h1>
 <p>Ces règles s’appliquent aux configurations dont vous êtes propriétaire lorsque le prétraitement IA est activé. WhiteList : accepter sans IA. BlackList : déplacer sans IA dans INBOX / _02-BlackList.</p>
 <p class="muted">Adresses From exactes, sans distinction de majuscules. Elles concernent les messages récents, non lus et non encore traités. Une adresse ne peut appartenir qu’à une seule liste. L’adresse From d’un email peut être usurpée : réservez la WhiteList aux expéditeurs que vous souhaitez accepter sans vérification IA.</p>
-<section><h2>Importer des adresses</h2><form id="sender-import" method="post" action="/sender-lists/import">
-<label>Liste de destination<select name="kind"><option value="whitelist">WhiteList — accepter sans IA</option><option value="blacklist">BlackList — déplacer sans IA</option></select></label>
-<label>Adresses email<textarea name="emails" rows="6" maxlength="300000" required aria-describedby="sender-format" placeholder="alice@example.com; bob@example.com"></textarea></label>
-<p id="sender-format">Séparateurs acceptés : point-virgule (;), barre verticale (|), virgule (,), tabulation (TAB) ou retour à la ligne. Adresses seules, sans nom d’affichage. Maximum 1000 adresses par import ; les doublons sont ignorés.</p>
-<button type="submit">Vérifier et importer</button></form></section>
+<div data-tabs>
+<div class="tabs" data-tab-list aria-label="Listes d’expéditeurs" hidden>
+<button type="button" data-tab="sender-search-panel">Rechercher dans les listes</button>
+<button type="button" data-tab="sender-import-panel">Importer des adresses</button>
+</div>
+<div id="sender-search-panel" data-tab-panel>
 <form id="sender-search" method="get" action="/sender-lists#sender-search" class="filters"><label>Recherche « contient »<input type="search" name="q" minlength="3" maxlength="254" aria-describedby="sender-search-help" value="{{ q }}" placeholder="exemple.com"></label><button>Rechercher</button><a id="sender-search-clear" href="/sender-lists#sender-search">Effacer la recherche</a></form>
 <p id="sender-search-help" class="muted">Saisissez au moins 3 caractères : les résultats se mettent à jour automatiquement.</p>
 <p id="sender-search-status" role="status" aria-live="polite"></p>
 <div id="sender-results">{% include "sender_list_results.html" %}</div>
+</div>
+<section id="sender-import-panel" data-tab-panel><h2>Importer des adresses</h2><p>Pour préparer votre liste blanche à partir des emails que vous avez envoyés, utilisez <a href="/manual#manual-senders">Extraction des destinataires</a>, puis copiez les adresses ici.</p><form id="sender-import" method="post" action="/sender-lists/import">
+<label>Liste de destination<select name="kind"><option value="whitelist">WhiteList — accepter sans IA</option><option value="blacklist">BlackList — déplacer sans IA</option></select></label>
+<label>Adresses email<textarea name="emails" rows="6" maxlength="300000" required aria-describedby="sender-format" placeholder="alice@example.com; bob@example.com"></textarea></label>
+<p id="sender-format">Séparateurs acceptés : point-virgule (;), barre verticale (|), virgule (,), tabulation (TAB) ou retour à la ligne. Adresses seules, sans nom d’affichage. Maximum 1000 adresses par import ; les doublons sont ignorés.</p>
+<button type="submit">Vérifier et importer</button></form></section>
+</div>
 <script defer src="/static/sender_lists.js"></script>{% endblock %}
