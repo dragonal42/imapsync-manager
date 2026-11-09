@@ -12,6 +12,14 @@
                     element.parentElement.querySelector('small').textContent = account.last_run;
                 }
             });
+            document.querySelectorAll('[data-execution-controls]').forEach(group => {
+                const account = data.accounts.find(a => a.id === group.dataset.executionControls);
+                if (!account) return;
+                group.dataset.running = String(account.running);
+                group.querySelector('[data-task-run]').hidden = account.running;
+                group.querySelector('[data-task-stop]').hidden = !account.running;
+                group.querySelector('.execution-running').hidden = !account.running;
+            });
             for (const element of document.querySelectorAll('[data-running-log]')) {
                 const result = await fetch('/api/logs/' + encodeURIComponent(element.dataset.runningLog));
                 if (!result.ok || result.redirected) continue;
@@ -20,7 +28,7 @@
                 if (run.finished) delete element.dataset.runningLog;
             }
         } catch (_) { /* Retry after temporary network failures. */ }
-        setTimeout(poll, 5000);
+        finally { setTimeout(poll, 5000); }
     };
     setTimeout(poll, 1000);
 })();
