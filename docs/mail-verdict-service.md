@@ -40,3 +40,5 @@ Le fichier persistant `data/mail_verdict_state.json` mémorise les étapes d'env
 Les logs sont réservés aux administrateurs, avec les mêmes pages de consultation, suppression et durée de conservation que les autres tâches. Le mode Debug conserve les étapes détaillées et les diagnostics fournisseur expurgés ; sinon restent le résultat, les compteurs, les erreurs et les tokens communiqués par l'IA. Les erreurs/avertissements figurent aussi dans le rapport quotidien. Un passage réussi sans activité ne conserve pas de journal.
 
 Tester avec une boîte dédiée avant utilisation réelle. Les tests automatisés utilisent des doubles IMAP, SMTP, Rspamd et IA : aucun envoi réel n'est effectué par ces tests.
+
+Le fournisseur IA reçoit aussi jusqu’à 1 000 caractères du texte décodé et les libellés de liens avec leurs domaines. Aucun lien n’est ouvert et aucune pièce jointe n’est transmise à l’IA. Cette extraction concerne uniquement le service de diagnostic. Le journal Debug indique les longueurs et le verdict, sans recopier le texte.
