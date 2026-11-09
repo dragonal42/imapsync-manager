@@ -118,6 +118,7 @@ def test_debug_diagnostics_and_tokens(env,monkeypatch,debug):
     async def process(*args):
         progress=args[-1]
         progress('DETAIL étape de connexion')
+        progress('[AVERTISSEMENT] Verdict inconclusif')
         progress('[ERROR] Fournisseur indisponible HTTP 429')
         progress('[ERROR IA DEBUG] Diagnostic fournisseur expurgé')
         progress({'usage':{'input':10,'output':2,'total':12}})
@@ -129,13 +130,25 @@ def test_debug_diagnostics_and_tokens(env,monkeypatch,debug):
     assert ('DETAIL' in log)==debug
     assert ('Diagnostic fournisseur expurgé' in log)==debug
     assert 'HTTP 429' in log and 'Tokens IA' in log and '12' in log
+    assert '[AVERTISSEMENT] Verdict inconclusif' in log
 
 
 @pytest.mark.parametrize('verdict',['uncertain','legitimate'])
-def test_simulation_and_uncertain_never_send_or_delete(monkeypatch,verdict):
-    mailbox,_,state,sent,run=setup(monkeypatch,verdict,simulation=verdict=='legitimate')
+def test_simulation_never_sends_or_deletes(monkeypatch,verdict):
+    mailbox,_,state,sent,run=setup(monkeypatch,verdict,simulation=True)
     run()
     assert not sent and not state and not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
+
+
+def test_inconclusive_sends_once_and_keeps_original(monkeypatch):
+    mailbox, _, state, sent, run = setup(monkeypatch, 'uncertain')
+    counts = run()
+    assert counts['sent'] == counts['inconclusive'] == 1
+    assert counts['errors'] == counts['deleted'] == 0
+    assert sent[0]['Subject'].startswith('[INCONCLUSIF]')
+    assert list(state.values()) == ['inconclusive_sent']
+    assert run()['sent'] == 0 and len(sent) == 1
+    assert not any(command in {'STORE', 'EXPUNGE'} for command, _ in mailbox.calls)
 
 
 def test_uidplus_required_before_any_send(monkeypatch):

@@ -18,7 +18,7 @@
 <h1>Tableau de bord</h1>
 <div class="metrics"><section><span>Utilisateurs{% if user.role != 'admin' %} dans mon espace{% endif %}</span><strong>{{ stats.users }}</strong></section><section><span>Configurations</span><strong>{{ stats.accounts }}</strong></section><section><span>Erreurs aujourd’hui</span><strong>{{ stats.errors }}</strong></section></div>
 {% if user.role == 'admin' %}<form method="get" action="/dashboard" class="filters"><label>Utilisateur<select name="owner"><option value="">Tous les utilisateurs</option>{% for item in config.users %}<option value="{{ item.email }}" {% if owner == item.email %}selected{% endif %}>{{ item.pseudo }} — {{ item.email }}</option>{% endfor %}</select></label><button>Filtrer</button></form>{% endif %}
-{% if user.role == 'admin' %}<section id="mail-verdict-service"><h2>Service de diagnostic email</h2><p>Analyse → réponse [DANGEREUX] / [SPAM] / [SAIN] → suppression de l’original après envoi SMTP réussi.</p>
+{% if user.role == 'admin' %}<section id="mail-verdict-service"><h2>Service de diagnostic email</h2><p>Analyse → compte rendu par email. Après acceptation SMTP, l’original est supprimé, sauf si le verdict est [INCONCLUSIF].</p>
 {% if service %}<p><strong class="schedule-{{ service.schedule_state|lower }}">{{ "Planification activée" if service.schedule_state == "RUNNING" else "Planification en pause" }}</strong> · Toutes les {{ service.sync_interval }} min · {{ 'Simulation' if service.simulation else 'Envoi réel' }} · <span data-account-status="admin-mail-verdict">{{ service.status }}</span> · <small>{{ service.last_run|datetime_seconds }}</small></p>{% else %}<p>Non configuré — planification en pause</p>{% endif %}
 <div class="task-service-grid">
 {% if service %}

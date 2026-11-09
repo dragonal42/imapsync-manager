@@ -25,7 +25,7 @@ Le destinataire est **le From du message reçu par cette boîte**, pas le Reply-
 - **[SPAM]** en orange : indésirable/publicité.
 - **[SAIN]** en vert : aucun signal suspect identifié (aucune garantie absolue).
 
-Le compte rendu comprend le verdict, le score Rspamd si demandé, puis le texte du message original (limité à 20 000 caractères), échappé pour éviter l'affichage de contenu HTML actif. L'original complet est joint en `.eml`. Une version uniquement HTML reste consultable dans cette pièce jointe. Un verdict incertain ne déclenche ni envoi ni suppression.
+Le compte rendu comprend le verdict, le score Rspamd si demandé, puis le texte du message original (limité à 20 000 caractères), échappé pour éviter l'affichage de contenu HTML actif. L'original complet est joint en `.eml`. Une version uniquement HTML reste consultable dans cette pièce jointe. En mode réel, un verdict incertain envoie un compte rendu [INCONCLUSIF] une seule fois et conserve l’original. En simulation, aucun SMTP n’est tenté. Un échec de l’API IA conserve le message sans envoyer de verdict. Les journaux distinguent un verdict inconclusif, un échec fournisseur et une acceptation SMTP.
 
 ## Reprise et journaux
 

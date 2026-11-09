@@ -802,7 +802,7 @@ async def execute_mail_verdict(account, actor):
                 if type(count) is int:
                     usage[key] = usage.get(key, 0) + count
             return
-        if not debug and ('DEBUG]' in str(value) or not (str(value).startswith('[ERROR') or str(value).startswith('Résultat :'))):
+        if not debug and ('DEBUG]' in str(value) or not str(value).startswith(('[ERROR', '[AVERTISSEMENT]', 'Résultat :'))):
             return
         lines.append('[' + datetime.now(timezone.utc).isoformat(timespec='seconds') + '] ' + str(value))
         run['log'] = '\n'.join(lines)[-65536:]
@@ -827,7 +827,7 @@ async def execute_mail_verdict(account, actor):
         counts = await process_mailbox(account, token, settings, settings.get('sApiKey' + account['sMoteurIA'], ''),
                     smtp['smtp_from'], active, lambda:read_json(state_file, {}),
                     lambda data:write_json(state_file, data), lambda mail:send_verdict_smtp(mail, smtp), progress)
-        run['status'] = 'Annulée' if active['cancelled'] else ('Succès avec avertissement' if counts['errors'] else 'Succès')
+        run['status'] = 'Annulée' if active['cancelled'] else ('Succès avec avertissement' if counts['errors'] or counts.get('inconclusive') else 'Succès')
     except asyncio.CancelledError:
         run['status'] = 'Interrompue'
         raise
@@ -836,7 +836,7 @@ async def execute_mail_verdict(account, actor):
         progress('[ERROR] ' + (str(error) if isinstance(error, PreprocessingError) else 'Échec de connexion ou de traitement. Aucun renvoi automatique en cas d’envoi ambigu.'))
     finally:
         run['finished'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
-        labels = {'analysed': 'Emails analysés', 'sent': 'Comptes rendus envoyés', 'deleted': 'Originaux supprimés', 'skipped': 'Emails ignorés', 'errors': 'Erreurs'}
+        labels = {'analysed': 'Emails analysés', 'sent': 'Comptes rendus envoyés', 'deleted': 'Originaux supprimés', 'skipped': 'Emails ignorés', 'inconclusive': 'Verdicts inconclusifs', 'errors': 'Erreurs'}
         progress('Résultat : ' + run['status'] + (' | ' + ' | '.join(labels[k] + ' : ' + str(v) for k, v in counts.items()) if counts else '')
                  + (' | Tokens IA : ' + json.dumps(usage) if usage else ''))
         config = load_config()

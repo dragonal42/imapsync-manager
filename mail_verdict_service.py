@@ -21,7 +21,8 @@ from sender_rules import sender_address, EMAIL
 SERVICE_ID = 'admin-mail-verdict'
 LABELS = {'scam': ('DANGEREUX', '#b91c1c', 'Suspicion de fraude ou de hameçonnage.'),
           'spam': ('SPAM', '#b45309', 'Message indésirable ou publicitaire.'),
-          'legitimate': ('SAIN', '#15803d', 'Aucun signal suspect identifié par cette analyse.')}
+          'legitimate': ('SAIN', '#15803d', 'Aucun signal suspect identifié par cette analyse.'),
+          'uncertain': ('INCONCLUSIF', '#52667a', 'Les éléments analysés ne suffisent pas à trancher. Ne considérez pas ce message comme sûr. L’original est conservé dans la boîte de diagnostic.')}
 
 
 def smtp_settings(form, saved):
@@ -145,7 +146,7 @@ def report_message(raw, recipient, smtp_from, verdict, score=None):
 
 async def process_mailbox(account, token, settings, key, smtp_from, active, read_state, save_state, send, progress):
     client = None
-    counts = {'analysed': 0, 'sent': 0, 'deleted': 0, 'skipped': 0, 'errors': 0}
+    counts = {'analysed': 0, 'sent': 0, 'deleted': 0, 'skipped': 0, 'inconclusive': 0, 'errors': 0}
     dry = account.get('simulation', True) or (account.get('use_rspamd') and settings.get('rspamd_simulation', True))
     async def call(fn, *args, **kwargs):
         task = asyncio.create_task(asyncio.to_thread(fn, *args, **kwargs))
@@ -186,7 +187,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
         if not all(uid.isdigit() for uid in uids):
             raise PreprocessingError('Réponse UID invalide.')
         progress('Simulation : ' + ('oui' if dry else 'non') + f' | Dossier : {account["source_folder"]} | Messages trouvés : {len(uids)}')
-        eligible = [uid for uid in sorted(set(uids), key=int) if state.get(scope + ':' + uid.decode()) not in {'deleted', 'ignored'}]
+        eligible = [uid for uid in sorted(set(uids), key=int) if state.get(scope + ':' + uid.decode()) not in {'deleted', 'ignored', 'inconclusive_sent'}]
         handled = 0
         for uid in eligible:
             if handled >= account.get('max_messages', 50):
@@ -242,21 +243,35 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     if not key:
                         raise PreprocessingError('Clé IA de l’administrateur absente.')
                     progress(f'UID {uid.decode()} : appel {engine} | modèle : {settings.get(engine.lower() + "_model", "défaut du fournisseur")}.')
-                    verdict = await provider_call(settings, key, compact_message(raw), active, call, progress, engine)
+                    evidence = compact_message(raw)
+                    progress(f'UID {uid.decode()} : données IA — objet présent : {"oui" if evidence["subject"] else "non"}'
+                             f' | types d’en-têtes : {len(evidence["headers"])} | URLs : {len(evidence["urls"])}'
+                             ' | corps complet et pièces jointes non transmis.')
+                    verdict = await provider_call(settings, key, evidence, active, call, progress, engine)
                     progress({'usage': getattr(verdict, 'usage', {})})
                     counts['analysed'] += 1
                     if verdict not in LABELS:
-                        raise PreprocessingError('Verdict incertain ; aucun envoi ni suppression.')
-                    progress(f'UID {uid.decode()} : {LABELS[verdict][0]}.')
+                        raise PreprocessingError('Verdict fournisseur non reconnu ; original conservé.')
+                    progress(f'UID {uid.decode()} : réponse {engine} — {LABELS[verdict][0]}'
+                             f' | {getattr(verdict, "diagnostic", "verdict valide")}.')
+                    inconclusive = verdict == 'uncertain'
+                    if inconclusive:
+                        counts['inconclusive'] += 1
+                        progress(f'[AVERTISSEMENT] UID {uid.decode()} : analyse inconclusive ; le fournisseur ne détaille pas son motif. Original conservé.')
                     if dry:
+                        progress(f'UID {uid.decode()} : simulation, aucun envoi SMTP ni suppression.')
                         continue
                     stop()
                     report = report_message(raw, recipient, smtp_from, verdict, score)
                     progress(f'UID {uid.decode()} : préparation SMTP, Message-ID {report["Message-ID"]}.')
                     state[identifier] = 'sending'; save_state(state)
                     await call(send, report)
-                    state[identifier] = 'sent'; save_state(state)
+                    state[identifier] = 'inconclusive_sent' if inconclusive else 'sent'
+                    save_state(state)
                     counts['sent'] += 1
+                    progress(f'UID {uid.decode()} : compte rendu accepté par SMTP.')
+                    if inconclusive:
+                        continue
                 if stage == 'sent':
                     handled += 1
                 if dry:
@@ -266,7 +281,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                 checked(await call(client.uid, 'EXPUNGE', uid))
                 state[identifier] = 'deleted'; save_state(state)
                 counts['deleted'] += 1
-                progress(f'UID {uid.decode()} : réponse acceptée par SMTP ; original supprimé.')
+                progress(f'UID {uid.decode()} : original supprimé après acceptation SMTP.')
             except Exception as error:
                 counts['errors'] += 1
                 detail = str(error) if isinstance(error, (PreprocessingError, RspamdError)) else transport_error(error)

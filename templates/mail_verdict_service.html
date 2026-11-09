@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block content %}<h1>Service de diagnostic email — test</h1>
-<p>Boîte dédiée : analyse des messages reçus puis compte rendu au champ From du message soumis. Les messages lus sont aussi examinés. Aucun message n’est envoyé en simulation. Un résultat incertain reste dans la boîte.</p>
+<p>Boîte dédiée : analyse des messages reçus puis compte rendu au champ From du message soumis. Les messages lus sont aussi examinés. Aucun message n’est envoyé en simulation. Un verdict incertain donne un compte rendu [INCONCLUSIF] en mode réel et l’original reste dans la boîte.</p>
 <form class="action-form" action="/admin/mail-verdict/save" method="post" data-toast="Service enregistré" data-redirect="/dashboard">
 {% with side='1', title='Source du service' %}<fieldset id="side{{ side }}" ><legend>{{ title }}</legend><label>Serveur IMAP<input name="host{{ side }}" value="{{ account.get('host' ~ side,'') }}" required></label><label>Identifiant IMAP<input name="user{{ side }}" value="{{ account.get('user' ~ side,'') }}" required></label>
 <label>Authentification de la messagerie<select name="authmech{{ side }}" data-auth-side="{{ side }}"><option value="PLAIN">Mot de passe IMAP</option><option value="XOAUTH2" {% if account.get('authmech' ~ side) == 'XOAUTH2' %}selected{% endif %}>Connexion OAuth2</option></select></label>
