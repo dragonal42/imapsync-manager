@@ -24,7 +24,7 @@
 <label>Période en jours (0 = toutes les dates)<input type="number" name="period_days" value="{{ account.get('period_days',5) }}" min="0" max="36500" required></label>
 <label>Messages maximum par passage<input type="number" name="max_messages" value="{{ account.get('max_messages',50) }}" min="1" max="500" required></label>
 <label>Intervalle en minutes<input type="number" name="sync_interval" value="{{ account.get('sync_interval',5) }}" min="5" max="10080" step="5" required></label>
-<label>Moteur IA<select name="sMoteurIA">{% for engine in ['Mistral','Gemini'] %}<option {% if account.get('sMoteurIA','Mistral') == engine %}selected{% endif %}>{{ engine }}</option>{% endfor %}</select></label>
+<label>Moteur IA<select name="sMoteurIA">{% for engine in ['Mistral','Gemini','Claude','OpenAI'] %}<option {% if account.get('sMoteurIA','Mistral') == engine %}selected{% endif %}>{{ engine }}</option>{% endfor %}</select></label>
 </div><label class="check"><input type="checkbox" name="use_rspamd" {% if account.get('use_rspamd') %}checked{% endif %}> Ajouter le score Rspamd avant l’analyse IA</label>
 <label class="check"><input type="checkbox" name="simulation" {% if account.get('simulation',True) %}checked{% endif %}> Simulation — analyser sans envoyer ni supprimer</label>
 <p>Les clés, modèles et quotas sont ceux de l’administrateur principal ; les verdicts sont envoyés par le SMTP renseigné ci-dessus. Le score numérique est fourni uniquement si Rspamd est activé. Sa simulation globale reste prioritaire. Les listes blanche/noire ne court-circuitent pas le diagnostic de ce service.</p>

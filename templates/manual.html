@@ -19,8 +19,8 @@
 <label class="check"><input type="checkbox" name="delete2"> Supprimer les messages destination absents de la source</label>
 </div><div class="actions"><button id="bt-sync" type="submit">Lancer la synchronisation</button><button id="bt-abort" type="button" class="danger" disabled>Arrêter</button></div></section>
 <section id="manual-ai"><h2>Analyse antispam locale / IA</h2><p>Utilise uniquement les identifiants Source ci-dessus, sans transfert vers la destination. Le suivi détaillé est activé pour ce lancement, même si le Debug global est désactivé.</p><div class="grid">
-<label>Moteur d’analyse<select name="sMoteurIA"><option>Mistral</option><option>Gemini</option><option value="Rspamd">Rspamd local — sans API IA</option></select></label>
-<label class="check"><input type="checkbox" name="rspamd_precheck"> Prétri Rspamd avant Mistral/Gemini</label><label>Type d’analyse<select name="ai_mode"><option value="preview">Simulation — analyser sans déplacer</option><option value="move">Tri — déplacer les spams et arnaques</option></select></label>
+<label>Moteur d’analyse<select name="sMoteurIA"><option>Mistral</option><option>Gemini</option><option>Claude</option><option>OpenAI</option><option value="Rspamd">Rspamd local — sans API IA</option></select></label>
+<label class="check"><input type="checkbox" name="rspamd_precheck"> Prétri Rspamd avant le moteur IA choisi</label><label>Type d’analyse<select name="ai_mode"><option value="preview">Simulation — analyser sans déplacer</option><option value="move">Tri — déplacer les spams et arnaques</option></select></label>
 <label>Dossier source à analyser (nom IMAP)<input name="source_folder" value="INBOX" maxlength="255"></label>
 <label>Période de l’analyse en jours (0 = sans limite)<input name="nPeriodeJours" type="number" min="0" max="36500" step="1" value="5"></label>
 <label class="check"><input name="ai_recursive" type="checkbox"> Inclure les sous-dossiers autorisés</label>

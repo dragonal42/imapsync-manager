@@ -47,6 +47,18 @@ BATCH_PROMPT = ('Classify each email independently as spam, scam, legitimate, or
 BATCH_SCHEMA = {"type": "object", "properties": {"results": {"type": "array", "items": {
  "type": "object", "properties": {"id": {"type": "string"}, "verdict": SCHEMA["properties"]["verdict"]},
  "required": ["id", "verdict"], "additionalProperties": False}}}, "required": ["results"], "additionalProperties": False}
+DEFAULT_MODELS = {
+    "Mistral": "mistral-small-latest", "Gemini": "gemini-2.5-flash",
+    "Claude": "claude-haiku-4-5", "OpenAI": "gpt-4o-mini",
+}
+AI_ENGINES = tuple(DEFAULT_MODELS)
+
+
+def provider_model(engine, settings):
+    prefix = engine.lower()
+    return settings.get(prefix + "_model") or os.getenv(prefix.upper() + "_MODEL", DEFAULT_MODELS[engine])
+
+
 MAX_BATCH_BYTES = 64 * 1024
 
 class BatchClassification(dict):
@@ -63,7 +75,7 @@ def request_options(metadata):
 
 def request_estimate(engine, metadata):
     prompt, schema, limit = request_options(metadata)
-    return len((json.dumps(metadata) + prompt + json.dumps(schema)).encode()) + (limit if engine == "Mistral" else 0)
+    return len((json.dumps(metadata) + prompt + json.dumps(schema)).encode()) + (limit if engine != "Gemini" else 0)
 
 
 def validate_batch(result, metadata):
@@ -101,7 +113,7 @@ async def provider_call(account, key, metadata, active, call, progress, engine="
     rate_bucket = (account.get('owner', ''), engine)
     legacy_mistral = engine == 'Mistral' and not account.get('owner')
     prefix = engine.lower()
-    model = account.get(prefix + '_model') or os.getenv(prefix.upper() + '_MODEL', 'mistral-small-latest' if engine == 'Mistral' else 'gemini-2.5-flash')
+    model = provider_model(engine, account)
     interval = 1 / float(account.get(prefix + '_rps', 1 if engine == 'Mistral' else .2))
     rpm = account.get(prefix + '_rpm', 0)
     if rpm:
@@ -261,7 +273,7 @@ def provider_debug(response, key, metadata):
     headers = {}
     for name, value in getattr(response, 'headers', {}).items():
         lower = name.lower()
-        if lower in {'retry-after', 'x-request-id', 'request-id', 'content-type'} or re.fullmatch(r'(?:x-)?ratelimit-(?:limit|remaining|reset)(?:-[a-z-]+)?', lower):
+        if lower in {'retry-after', 'x-request-id', 'request-id', 'content-type'} or lower.startswith('anthropic-ratelimit-') or re.fullmatch(r'(?:x-)?ratelimit-(?:limit|remaining|reset)(?:-[a-z-]+)?', lower):
             headers[lower] = safe(value)
     return 'Réponse fournisseur (champs diagnostiques) : ' + json.dumps(details, ensure_ascii=False) + '\nEn-têtes de diagnostic : ' + (json.dumps(headers, ensure_ascii=False) if headers else 'non communiqués')
 
@@ -310,6 +322,46 @@ def classify(engine, key, metadata, model=None):
                 stage = "génération interrompue : limite MAX_TOKENS atteinte" if candidate.get("finishReason") == "MAX_TOKENS" else "génération bloquée ou non terminée (finishReason différent de STOP)"
                 raise ValueError()
             answer = "".join(p.get("text", "") for p in candidate["content"]["parts"] if not p.get("thought"))
+        elif engine in ("Claude", "OpenAI"):
+            model = model or provider_model(engine, {})
+            fmt = {"type": "json_schema", "schema": schema}
+            if engine == "Claude":
+                response = requests.post("https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": key, "anthropic-version": "2023-06-01"}, json={
+                        "model": model, "system": prompt, "max_tokens": output_limit,
+                        "messages": [{"role": "user", "content": payload}],
+                        "output_config": {"format": fmt}}, timeout=(10, 45), allow_redirects=False)
+            else:
+                response = requests.post("https://api.openai.com/v1/responses",
+                    headers={"Authorization": "Bearer " + key}, json={
+                        "model": model, "instructions": prompt, "input": payload,
+                        "store": False, "max_output_tokens": output_limit,
+                        "text": {"format": {**fmt, "name": "email_verdict", "strict": True}}},
+                    timeout=(10, 45), allow_redirects=False)
+            response.raise_for_status()
+            stage = "réponse HTTP inattendue"
+            if response.status_code != 200:
+                raise ValueError()
+            stage = "décodage JSON de la réponse HTTP"
+            body = response.json()
+            usage = token_usage(engine, body)
+            if engine == "Claude":
+                stage = "réponse Claude refusée, incomplète ou invalide"
+                if body.get("stop_reason") != "end_turn":
+                    raise ValueError()
+                blocks = body["content"]
+                answer = "".join(block["text"] for block in blocks if block["type"] == "text")
+            else:
+                stage = "réponse OpenAI refusée, incomplète ou invalide"
+                if body.get("status") != "completed":
+                    raise ValueError()
+                messages = [item for item in body["output"] if item["type"] == "message"]
+                if not messages or any(item.get("status") != "completed" for item in messages):
+                    raise ValueError()
+                blocks = [block for item in messages for block in item["content"]]
+                if any(block["type"] != "output_text" for block in blocks):
+                    raise ValueError()
+                answer = "".join(block["text"] for block in blocks)
         else:
             raise ValueError()
         stage = "contenu généré non JSON"
@@ -560,7 +612,7 @@ async def _preprocess(account, token, key, active, read_state, save_state, progr
                 stopped()
                 metadata = pending[0][2] if batch_size == 1 else envelope(pending)
                 ids = ",".join(record[0].decode("ascii") for record in pending)
-                model = account.get(engine.lower() + '_model') or os.getenv(engine.upper() + '_MODEL', 'mistral-small-latest' if engine == 'Mistral' else 'gemini-2.5-flash')
+                model = provider_model(engine, account)
                 output_limit = request_options(metadata)[2] + (4096 if engine == 'Gemini' and batch_size > 1 else 0)
                 progress(f"Lot IA : appel {engine} | modèle : {model} | emails : {len(pending)} | UID : {ids} | métadonnées : {len(json.dumps(metadata).encode())} octets | limite de sortie : {output_limit} | sortie JSON" + (" | stream=false" if engine == 'Mistral' else ""))
                 try:

@@ -9,7 +9,7 @@
 <label>Seuil haut : score supérieur ou égal suspect<input type="number" name="rspamd_spam_score" value="{{ config.rspamd_spam_score }}" min="-99.9" max="1000" step="0.1" required></label>
 </div>
 <label class="check-label"><input type="checkbox" name="rspamd_simulation" {% if config.rspamd_simulation %}checked{% endif %}> Simulation Rspamd obligatoire : aucun déplacement ni marquage par le prétraitement</label>
-<p class="muted">Réglages globaux, appliqués aux prochaines exécutions. Rspamd seul conserve les scores intermédiaires ; avec prétri et IA, ils sont transmis à Mistral/Gemini. Les suspects locaux vont dans INBOX._03-Suspects. La simulation couvre aussi les listes et l’IA éventuelle, mais pas le transfert IMAP. Commencez en simulation pour calibrer les seuils.</p>
+<p class="muted">Réglages globaux, appliqués aux prochaines exécutions. Rspamd seul conserve les scores intermédiaires ; avec prétri et IA, ils sont transmis au fournisseur IA choisi. Les suspects locaux vont dans INBOX._03-Suspects. La simulation couvre aussi les listes et l’IA éventuelle, mais pas le transfert IMAP. Commencez en simulation pour calibrer les seuils.</p>
 <p class="muted">Une analyse Rspamd à la fois. Le message complet est envoyé au service interne ; aucun contexte SMTP n’est inventé pour SPF/DMARC. Les vérifications DNS et réputation dépendent de votre configuration Rspamd. Aucun apprentissage n’est demandé par cette application.</p>
 <button class="save-button"><span class="save-icon" aria-hidden="true">✓</span> Enregistrer Rspamd</button>
 </form></section>

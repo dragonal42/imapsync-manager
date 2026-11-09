@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import requests
-from ai_preprocessing import preprocess, PreprocessingError, TECHNICAL_FOLDER_EXCLUDE
+from ai_preprocessing import preprocess, PreprocessingError, TECHNICAL_FOLDER_EXCLUDE, AI_ENGINES, provider_model
 from run_logging import RunMetrics
 from sender_export import extract_senders
 from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error
@@ -113,7 +113,14 @@ AI_DEFAULTS = {
     "gemini_rps": 0.2, "gemini_rpm": 10, "gemini_rpd": 1500, "gemini_tpm": 20000,
     "mistral_batch_size": 5, "gemini_batch_size": 5,
 }
-AI_KEYS = (*AI_DEFAULTS, "sApiKeyMistral", "sApiKeyGemini")
+for engine in ("Claude", "OpenAI"):
+    prefix = engine.lower()
+    AI_DEFAULTS.update({prefix + "_" + name: value for name, value in {
+        "model": provider_model(engine, {}), "rps": 0.2, "rpm": 10,
+        "rpd": 0, "tpm": 20000, "batch_size": 5,
+    }.items()})
+AI_SECRET_KEYS = tuple("sApiKey" + engine for engine in AI_ENGINES)
+AI_KEYS = (*AI_DEFAULTS, *AI_SECRET_KEYS)
 
 
 def user_ai_settings(config, email):
@@ -450,8 +457,8 @@ async def dashboard(request: Request, owner: str = "", date_from: str = "", date
     if request.state.user["role"] != "admin":
         config["users"] = []
     config["oauth_apps"] = {}
-    config.pop("sApiKeyMistral", None)
-    config.pop("sApiKeyGemini", None)
+    for key in AI_SECRET_KEYS:
+        config.pop(key, None)
     config["report_email"] = ""
     return render(request, "dashboard.html", config=config, owner=owner, stats=stats, service=config.get("mail_verdict_service", {}), show_history=show_history, selected_account=account_id,
                   date_from=start.isoformat(), date_to=end.isoformat(), timezone_name=str(local_zone()))
@@ -734,8 +741,8 @@ async def service_action(request: Request, action: str):
         except (ValueError, TypeError):
             raise HTTPException(400, 'Période ou limite invalide')
         engine = str(form.get('sMoteurIA', 'Mistral'))
-        if engine not in {'Mistral', 'Gemini'}:
-            raise HTTPException(400, 'Choisissez Mistral ou Gemini')
+        if engine not in AI_ENGINES:
+            raise HTTPException(400, 'Choisissez un moteur IA disponible')
         if form.get('use_rspamd') == 'on' and not config['rspamd_enabled']:
             raise HTTPException(400, 'Activez Rspamd dans l’administration')
         account.update(id=SERVICE_ID, owner=ADMIN_EMAIL, label='Service de diagnostic email', kind='mail_verdict_service',
@@ -878,7 +885,7 @@ async def settings(request: Request):
         root_config = config
         target = ai_target(request, config, str(form.get("owner", "")))
         config = user_ai_settings(root_config, target["email"])
-        for provider in ("mistral", "gemini"):
+        for provider in (engine.lower() for engine in AI_ENGINES):
             rate_key = provider + "_rps"
             if rate_key in form:
                 try:
@@ -913,7 +920,7 @@ async def settings(request: Request):
                     except (TypeError, ValueError):
                         raise HTTPException(400, "Quota IA invalide (entier positif ou 0 pour désactiver)")
                     config[key] = number
-        for key in ("sApiKeyMistral", "sApiKeyGemini"):
+        for key in AI_SECRET_KEYS:
             value = str(form.get(key, "")).strip()
             if len(value) > 4096 or any(ord(c) < 32 for c in value):
                 raise HTTPException(400, "Clé API invalide")
@@ -972,7 +979,7 @@ async def save_account(request: Request, account_id: str = ""):
     except (ValueError, TypeError):
         raise HTTPException(400, "Période IA invalide (1 à 365 jours)")
     engine = str(form.get("sMoteurIA", "Mistral"))
-    if engine not in {"Mistral", "Gemini", "Rspamd"}:
+    if engine not in (*AI_ENGINES, "Rspamd"):
         raise HTTPException(400, "Moteur IA invalide")
     if ai and (engine == "Rspamd" or form.get("rspamd_precheck") == "on") and not config["rspamd_enabled"]:
         raise HTTPException(400, "Rspamd doit être activé par un administrateur")
@@ -1151,7 +1158,7 @@ async def manual_sync(request: Request):
                        exclude_whitelist=form.get("exclude_whitelist") == "on")
     elif ai_only:
         engine = str(form.get("sMoteurIA", "Mistral"))
-        if engine not in {"Mistral", "Gemini", "Rspamd"}:
+        if engine not in (*AI_ENGINES, "Rspamd"):
             raise HTTPException(400, "Moteur IA invalide")
         try:
             days = int(form.get("nPeriodeJours", "5"))
@@ -1417,7 +1424,7 @@ async def execute(account, actor):
             account["sender_lists"] = copy.deepcopy(owner.get("sender_lists", {}))
             settings = load_config()
             personal_ai = user_ai_settings(settings, account["owner"])
-            for provider in ("mistral", "gemini"):
+            for provider in (engine.lower() for engine in AI_ENGINES):
                 for option in ("model", "rps", "rpm", "rpd", "tpm", "batch_size"):
                     account[provider + "_" + option] = personal_ai[provider + "_" + option]
             for option in RSPAMD_DEFAULTS:
