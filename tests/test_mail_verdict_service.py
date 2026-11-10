@@ -163,7 +163,11 @@ def test_debug_diagnostics_and_tokens(env,monkeypatch,debug):
 def test_simulation_and_uncertain_never_send_or_delete(monkeypatch,verdict):
     mailbox,_,state,sent,run=setup(monkeypatch,verdict,simulation=verdict=='legitimate')
     run()
-    assert not sent and not state and not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
+    assert not sent and not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
+    if verdict == 'uncertain':
+        assert list(state.values()) == [{'verdict': 'INCONCLUSIF'}]
+    else:
+        assert not state
 
 
 def test_uidplus_required_before_any_send(monkeypatch):
