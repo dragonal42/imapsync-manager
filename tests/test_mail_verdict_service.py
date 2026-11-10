@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import smtplib
 import pytest
 import main
 import mail_verdict_service as service
@@ -56,8 +57,13 @@ def test_response_before_uid_delete_and_report_content(monkeypatch,verdict,label
     assert message['To']=='submitter@example.org' and message['Subject'].startswith('['+label+']')
     assert message['Auto-Submitted']=='auto-replied'
     html=message.get_body(preferencelist=('html',)).get_content()
-    assert '<script>' not in html and '<img' not in html and '&lt;img' in html
-    assert list(message.iter_attachments())[0].get_payload(decode=True)==RAW
+    assert '<script>' not in html and '<img' not in html
+    if verdict == 'legitimate':
+        assert '&lt;img' in html
+        assert list(message.iter_attachments())[0].get_payload(decode=True)==RAW
+    else:
+        assert not list(message.iter_attachments())
+        assert 'Original <img' not in message.as_string()
     assert ('EXPUNGE',(b'42',)) in mailbox.calls
     assert list(state.values())==['deleted']
 
@@ -69,6 +75,28 @@ def test_smtp_failure_keeps_original_and_blocks_duplicate(monkeypatch):
     assert list(state.values())==['sending']
     assert not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
     assert run()['errors']==1 and not sent
+
+
+def test_confirmed_data_refusal_allows_retry(monkeypatch):
+    mailbox, _, state, sent, run = setup(monkeypatch, 'scam')
+    def reject(message):
+        raise smtplib.SMTPDataError(550, b'5.7.1 spam content rejected')
+    assert run(reject)['errors'] == 1
+    assert list(state.values()) == ['refused']
+    assert not any(command in {'STORE','EXPUNGE'} for command, _ in mailbox.calls)
+    assert run()['sent'] == 1 and len(sent) == 1
+
+
+def test_ambiguous_send_requires_matching_uid(monkeypatch):
+    _, account, state, sent, run = setup(monkeypatch)
+    def fail(message):
+        raise smtplib.SMTPServerDisconnected('connection lost')
+    assert run(fail)['errors'] == 1
+    assert list(state.values()) == ['sending']
+    account['_retry_uids'] = ['41']
+    assert run()['sent'] == 0
+    account['_retry_uids'] = ['42']
+    assert run()['sent'] == 1 and len(sent) == 1
 
 
 def test_successful_send_failed_delete_resumes_without_resending(monkeypatch):

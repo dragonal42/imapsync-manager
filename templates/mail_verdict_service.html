@@ -30,4 +30,11 @@
 <label class="check"><input type="checkbox" name="simulation" {% if account.get('simulation',True) %}checked{% endif %}> Simulation — analyser sans envoyer ni supprimer</label>
 <p>Les clés, modèles et quotas sont ceux de l’administrateur principal ; les verdicts sont envoyés par le SMTP renseigné ci-dessus. Le score numérique est fourni uniquement si Rspamd est activé. Sa simulation globale reste prioritaire. Les listes blanche/noire ne court-circuitent pas le diagnostic de ce service.</p>
 <p>Un seul dossier, sans récursion. Les réponses automatiques et listes de diffusion sont ignorées. Une adresse From peut être usurpée : utilisez une boîte de soumission dédiée. Le message est supprimé par UID après acceptation SMTP, sans toucher aux autres messages marqués supprimés. En cas d’envoi ambigu, aucun renvoi automatique ; vérifier les traces SMTP.</p>
-<button class="save-button"><span class="save-icon">✓</span> Enregistrer</button></section></form><script defer src="/static/auth.js"></script><script defer src="/static/mail-verdict.js"></script>{% endblock %}
+<button class="save-button"><span class="save-icon">✓</span> Enregistrer</button></section></form>
+{% if account.get('host1') %}<section><h2>Reprendre des envois SMTP bloqués</h2>
+<p>Réservé aux UID indiqués comme « envoi précédent ambigu ». Vérifiez dans les journaux SMTP que les comptes rendus n’ont pas été acceptés, puis indiquez les UID de cette boîte séparés par des virgules. La reprise lance uniquement ces messages.</p>
+<form class="action-form" method="post" action="/admin/mail-verdict/retry-smtp" data-toast="Reprise SMTP lancée">
+<label>UID IMAP <input name="uids" required maxlength="250" placeholder="5, 6"></label>
+<label class="check"><input type="checkbox" name="confirmed" required> J’ai vérifié que SMTP n’a pas accepté ces comptes rendus.</label>
+<button>Relancer ces UID</button></form></section>{% endif %}
+<script defer src="/static/auth.js"></script><script defer src="/static/mail-verdict.js"></script>{% endblock %}

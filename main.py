@@ -751,11 +751,21 @@ async def service_action(request: Request, action: str):
         account.setdefault('status', 'En attente')
         account.setdefault('last_run', 'Jamais')
         config['mail_verdict_service'] = account
-    elif action == 'run':
+    elif action in {'run', 'retry-smtp'}:
         if not account:
             raise HTTPException(400, 'Configurez la source du service')
         if not any(u['email'] == ADMIN_EMAIL and u.get('enabled', True) for u in config['users']):
             raise HTTPException(400, 'Administrateur principal absent ou désactivé')
+        if action == 'retry-smtp':
+            raw_uids = str(form.get('uids', ''))
+            if len(raw_uids) > 250 or form.get('confirmed') != 'on':
+                raise HTTPException(400, 'Confirmez que SMTP n’a pas accepté ces comptes rendus.')
+            uids = set(re.split(r'[\s,;]+', raw_uids.strip()))
+            if not 1 <= len(uids) <= 20 or any(not re.fullmatch(r'[1-9][0-9]{0,9}', uid) for uid in uids):
+                raise HTTPException(400, 'Indiquez entre 1 et 20 UID IMAP valides.')
+            if account.get('simulation', True) or (account.get('use_rspamd') and config.get('rspamd_simulation', True)):
+                raise HTTPException(400, 'Désactivez la simulation avant de reprendre un envoi.')
+            account['_retry_uids'] = sorted(uids, key=int)
         processes[SERVICE_ID] = {'owner': ADMIN_EMAIL, 'cancelled': False, 'process': None}
         spawn(execute_mail_verdict(account, request.state.user))
     elif action == 'schedule':
@@ -771,7 +781,7 @@ async def service_action(request: Request, action: str):
         config.pop('mail_verdict_service', None)
     else:
         raise HTTPException(404, 'Action inconnue')
-    if action != 'run':
+    if action not in {'run', 'retry-smtp'}:
         save_config(config)
     audit('MAIL_VERDICT_' + action.upper(), request.state.user)
     return RedirectResponse('/dashboard', status_code=303)
