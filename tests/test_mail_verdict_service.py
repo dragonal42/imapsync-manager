@@ -49,7 +49,7 @@ def test_response_before_uid_delete_and_report_content(monkeypatch,verdict,label
     mailbox,account,state,sent,run=setup(monkeypatch,verdict)
     def send(message):
         assert not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
-        assert list(state.values())==['sending']
+        assert [value for value in state.values() if isinstance(value, str)]==['sending']
         sent.append(message)
     counts=run(send)
     assert counts['sent']==counts['deleted']==counts['analysed']==1
@@ -65,14 +65,14 @@ def test_response_before_uid_delete_and_report_content(monkeypatch,verdict,label
         assert not list(message.iter_attachments())
         assert 'Original <img' not in message.as_string()
     assert ('EXPUNGE',(b'42',)) in mailbox.calls
-    assert list(state.values())==['deleted']
+    assert [value for value in state.values() if isinstance(value, str)]==['deleted']
 
 
 def test_smtp_failure_keeps_original_and_blocks_duplicate(monkeypatch):
     mailbox,_,state,sent,run=setup(monkeypatch)
     def fail(message): raise RuntimeError('SMTP timeout')
     assert run(fail)['errors']==1
-    assert list(state.values())==['sending']
+    assert [value for value in state.values() if isinstance(value, str)]==['sending']
     assert not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
     assert run()['errors']==1 and not sent
 
@@ -82,7 +82,7 @@ def test_confirmed_data_refusal_allows_retry(monkeypatch):
     def reject(message):
         raise smtplib.SMTPDataError(550, b'5.7.1 spam content rejected')
     assert run(reject)['errors'] == 1
-    assert list(state.values()) == ['refused']
+    assert [value for value in state.values() if isinstance(value, str)] == ['refused']
     assert not any(command in {'STORE','EXPUNGE'} for command, _ in mailbox.calls)
     assert run()['sent'] == 1 and len(sent) == 1
 
@@ -92,7 +92,7 @@ def test_ambiguous_send_requires_matching_uid(monkeypatch):
     def fail(message):
         raise smtplib.SMTPServerDisconnected('connection lost')
     assert run(fail)['errors'] == 1
-    assert list(state.values()) == ['sending']
+    assert [value for value in state.values() if isinstance(value, str)] == ['sending']
     account['_retry_uids'] = ['41']
     assert run()['sent'] == 0
     account['_retry_uids'] = ['42']
@@ -103,7 +103,7 @@ def test_successful_send_failed_delete_resumes_without_resending(monkeypatch):
     mailbox,_,state,sent,run=setup(monkeypatch)
     mailbox.fail_store=True
     assert run()['errors']==1 and len(sent)==1
-    assert list(state.values())==['sent']
+    assert [value for value in state.values() if isinstance(value, str)]==['sent']
     mailbox.fail_store=False
     assert run()['deleted']==1 and len(sent)==1
 
@@ -116,7 +116,7 @@ def test_stop_after_smtp_preserves_original_then_only_deletes(monkeypatch):
         active['cancelled']=True
     with pytest.raises(PreprocessingError,match='Arrêt demandé'):
         run(send,active)
-    assert list(state.values())==['sent']
+    assert [value for value in state.values() if isinstance(value, str)]==['sent']
     assert not any(command in {'STORE','EXPUNGE'} for command,_ in mailbox.calls)
     assert run()['deleted']==1 and len(sent)==1
 
@@ -256,3 +256,26 @@ def test_verdict_evidence_keeps_brand_homoglyphs_and_uses_link_domains():
     assert evidence['labelled_links'] == [{'label': 'Consulter mon espace', 'domain': 'example.net'}]
     assert 'example.net' in evidence['link_domains']
     assert 'SECRET' not in str(evidence) and 'NOT_VISIBLE' not in str(evidence)
+
+
+def test_mailbox_inventory_reads_headers_and_deletes_only_selected_uid(monkeypatch):
+    mailbox = Mailbox()
+    original = mailbox.uid
+    def uid(command, *args):
+        if command == 'FETCH' and 'HEADER.FIELDS' in args[1]:
+            mailbox.calls.append((command, args))
+            return 'OK', [(b'42', b'From: sender@example.org\r\nSubject: Test\r\n\r\n')]
+        return original(command, *args)
+    mailbox.uid = uid
+    monkeypatch.setattr(service.imaplib, 'IMAP4_SSL', lambda *a, **kw: mailbox)
+    account = dict(host1='mail', user1='alice', pass1='secret', source_folder='INBOX')
+    scope = service.mailbox_scope(account, mailbox)
+    state = {scope + ':42': 'refused', scope + ':42:result': {'verdict': 'DANGEREUX'}}
+    result = service.inspect_verdict_mailbox(account, '', state)
+    assert mailbox.readonly and result['messages'][0]['result']['verdict'] == 'DANGEREUX'
+    assert not any(command in {'STORE', 'EXPUNGE'} for command, _ in mailbox.calls)
+    with pytest.raises(PreprocessingError, match='ont changé'):
+        service.inspect_verdict_mailbox(account, '', state, ('0' * 64, '42'))
+    assert not any(command in {'STORE', 'EXPUNGE'} for command, _ in mailbox.calls)
+    service.inspect_verdict_mailbox(account, '', state, (scope, '42'))
+    assert mailbox.calls[-1] == ('EXPUNGE', (b'42',))

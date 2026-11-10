@@ -265,6 +265,58 @@ def report_message(raw, recipient, smtp_from, verdict, score=None):
     return message
 
 
+def mailbox_scope(account, client):
+    validity = client.response('UIDVALIDITY')[1][0]
+    if not validity or not validity.isdigit():
+        raise PreprocessingError('UIDVALIDITY absent ; opération interrompue.')
+    return hashlib.sha256(json.dumps([account['host1'], account['user1'],
+                                      account['source_folder'], validity.decode()]).encode()).hexdigest()
+
+
+def inspect_verdict_mailbox(account, token, state, deletion=None):
+    """Read headers only, or delete one UID in the exact mailbox previously listed."""
+    client = imaplib.IMAP4_SSL(account['host1'], port=993, ssl_context=ssl.create_default_context(), timeout=30)
+    try:
+        if account.get('authmech1') == 'XOAUTH2':
+            auth = ('user=' + account['user1'] + '\x01auth=Bearer ' + token + '\x01\x01').encode()
+            checked(client.authenticate('XOAUTH2', lambda _: auth))
+        else:
+            checked(client.login(account['user1'], account['pass1']))
+        if deletion and b'UIDPLUS' not in b' '.join(checked(client.capability())).upper().split():
+            raise PreprocessingError('UIDPLUS requis pour la suppression individuelle.')
+        checked(client.select(quote_mailbox(account['source_folder']), readonly=not deletion))
+        scope = mailbox_scope(account, client)
+        if deletion:
+            expected_scope, uid = deletion
+            if scope != expected_scope:
+                raise PreprocessingError('La boîte ou ses UID ont changé. Rechargez la liste.')
+            uid = uid.encode('ascii')
+            if uid not in b' '.join(checked(client.uid('SEARCH', None, 'UID', uid))).split():
+                raise PreprocessingError('Ce message n’est plus dans la boîte. Rechargez la liste.')
+            checked(client.uid('STORE', uid, '+FLAGS.SILENT', '(\\Deleted)'))
+            checked(client.uid('EXPUNGE', uid))
+            return None
+        uids = b' '.join(checked(client.uid('SEARCH', None, 'UNDELETED'))).split()
+        messages = []
+        for uid in sorted({uid for uid in uids if uid.isdigit()}, key=int, reverse=True)[:50]:
+            rows = checked(client.uid('FETCH', uid, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'))
+            header = next((row[1] for row in rows if isinstance(row, tuple) and isinstance(row[1], bytes)), None)
+            if header is None:
+                continue
+            msg = BytesParser(policy=policy.default).parsebytes(header[:65536])
+            uid = uid.decode()
+            identifier = scope + ':' + uid
+            messages.append(dict(uid=uid, sender=str(msg.get('From', ''))[:254],
+                                 subject=str(msg.get('Subject', ''))[:250], date=str(msg.get('Date', ''))[:100],
+                                 status=state.get(identifier, ''), result=state.get(identifier + ':result', {})))
+        return {'scope': scope, 'messages': messages, 'total': len(uids)}
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
 async def process_mailbox(account, token, settings, key, smtp_from, active, read_state, save_state, send, progress):
     client = None
     counts = {'analysed': 0, 'sent': 0, 'deleted': 0, 'skipped': 0, 'errors': 0}
@@ -293,10 +345,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
         if not dry and b'UIDPLUS' not in capabilities:
             raise PreprocessingError('UIDPLUS requis pour supprimer uniquement le message envoyé. Aucun envoi effectué.')
         checked(await call(client.select, quote_mailbox(account['source_folder']), readonly=dry))
-        validity = client.response('UIDVALIDITY')[1][0]
-        if not validity or not validity.isdigit():
-            raise PreprocessingError('UIDVALIDITY absent ; aucun envoi effectué.')
-        scope = hashlib.sha256(json.dumps([account['host1'], account['user1'], account['source_folder'], validity.decode()]).encode()).hexdigest()
+        scope = mailbox_scope(account, client)
         state = read_state()
         criteria = ['ALL']  # Includes read mail, and sent-but-not-yet-expunged messages.
         days = account.get('period_days', 5)
@@ -377,6 +426,9 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                              f' | {getattr(verdict, "diagnostic", "réponse validée")}.')
                     progress({'usage': getattr(verdict, 'usage', {})})
                     counts['analysed'] += 1
+                    if not dry:
+                        state[identifier + ':result'] = {'verdict': LABELS.get(verdict, ('INCONCLUSIF',))[0]}
+                        save_state(state)
                     if verdict not in LABELS:
                         raise PreprocessingError('Verdict incertain ; aucun envoi ni suppression.')
                     progress(f'UID {uid.decode()} : {LABELS[verdict][0]}.')
@@ -392,7 +444,9 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                         refusal = smtp_refusal(error)
                         if refusal is None:
                             raise
-                        state[identifier] = 'refused'; save_state(state)
+                        state[identifier] = 'refused'
+                        state[identifier + ':result']['smtp'] = refusal
+                        save_state(state)
                         raise PreprocessingError('Refus SMTP confirmé : ' + refusal +
                                                  '. Original conservé ; relance autorisée.') from None
                     state[identifier] = 'sent'; save_state(state)
@@ -409,6 +463,9 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                 progress(f'UID {uid.decode()} : réponse acceptée par SMTP ; original supprimé.')
             except Exception as error:
                 counts['errors'] += 1
+                if not dry and state.get(identifier) not in {'sending', 'refused', 'sent', 'deleted'}:
+                    state.setdefault(identifier + ':result', {})['failure'] = 'Analyse ou lecture incomplète ; voir le journal.'
+                    save_state(state)
                 detail = str(error) if isinstance(error, (PreprocessingError, RspamdError)) else transport_error(error)
                 progress(f'[ERROR] UID {uid.decode()} : {detail}')
                 for line in getattr(error, 'debug', '').splitlines():

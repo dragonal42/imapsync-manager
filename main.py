@@ -23,7 +23,7 @@ import requests
 from ai_preprocessing import preprocess, PreprocessingError, TECHNICAL_FOLDER_EXCLUDE, AI_ENGINES, provider_model
 from run_logging import RunMetrics
 from sender_export import extract_senders
-from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error
+from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error, inspect_verdict_mailbox
 from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
 from sender_rules import KINDS, parse_import, EMAIL
@@ -635,10 +635,57 @@ async def manage_user(request: Request, action: str):
     return RedirectResponse('/admin', status_code=303)
 
 
+async def verdict_mailbox_operation(account, deletion=None):
+    if not account:
+        raise HTTPException(400, 'Enregistrez d’abord la boîte de diagnostic.')
+    if SERVICE_ID in processes:
+        raise HTTPException(409, 'Attendez la fin du diagnostic avant cette opération.')
+    processes[SERVICE_ID] = {'owner': ADMIN_EMAIL, 'cancelled': False, 'process': None}
+    try:
+        token = ''
+        if account['authmech1'] == 'XOAUTH2':
+            token = await refresh_access_token(account, '1', [])
+            config = load_config()
+            config['mail_verdict_service']['refresh1'] = account['refresh1']
+            save_config(config)
+        state = read_json(CONFIG_FILE.with_name('mail_verdict_state.json'), {})
+        job = asyncio.create_task(asyncio.to_thread(inspect_verdict_mailbox, account, token, state, deletion))
+        try:
+            return await asyncio.shield(job)
+        except asyncio.CancelledError:
+            await job
+            raise
+    except Exception as error:
+        detail = str(error) if isinstance(error, PreprocessingError) else transport_error(error)
+        raise HTTPException(502, detail) from None
+    finally:
+        processes.pop(SERVICE_ID, None)
+
+
 @app.get('/admin/mail-verdict')
-async def service_form(request: Request):
+async def service_form(request: Request, mailbox: bool = False):
     require_admin(request)
-    return render(request, 'mail_verdict_service.html', account=load_config().get('mail_verdict_service', {}))
+    account = copy.deepcopy(load_config().get('mail_verdict_service', {}))
+    inventory, inventory_error = None, None
+    if mailbox:
+        try:
+            inventory = await verdict_mailbox_operation(account)
+        except HTTPException as error:
+            inventory_error = error.detail
+    return render(request, 'mail_verdict_service.html', account=account, inventory=inventory, inventory_error=inventory_error)
+
+
+@app.post('/admin/mail-verdict/delete-message')
+async def service_delete_message(request: Request):
+    require_admin(request)
+    form = await request.form()
+    uid, scope = str(form.get('uid', '')), str(form.get('scope', ''))
+    if not re.fullmatch(r'[1-9][0-9]{0,9}', uid) or not re.fullmatch(r'[0-9a-f]{64}', scope):
+        raise HTTPException(400, 'UID ou boîte invalide. Rechargez la liste.')
+    account = copy.deepcopy(load_config().get('mail_verdict_service', {}))
+    await verdict_mailbox_operation(account, (scope, uid))
+    audit('MAIL_VERDICT_DELETE_MESSAGE', request.state.user, uid=uid)
+    return RedirectResponse('/admin/mail-verdict?mailbox=1#verdict-mailbox', status_code=303)
 
 
 def service_source(form, saved):
