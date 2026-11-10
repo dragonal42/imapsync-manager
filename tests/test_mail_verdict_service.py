@@ -283,3 +283,38 @@ def test_mailbox_inventory_reads_headers_and_deletes_only_selected_uid(monkeypat
     assert not any(command in {'STORE', 'EXPUNGE'} for command, _ in mailbox.calls)
     service.inspect_verdict_mailbox(account, '', state, (scope, '42'))
     assert mailbox.calls[-1] == ('EXPUNGE', (b'42',))
+
+
+def test_forced_inconclusive_report_deletes_only_selected_uid_after_send(monkeypatch):
+    mailbox, account, state, sent, run = setup(monkeypatch, 'uncertain')
+    account['_force_message'] = (service.mailbox_scope(account, mailbox), '42')
+    def send(message):
+        assert not any(command == 'STORE' for command, _ in mailbox.calls)
+        sent.append(message)
+    counts = run(send)
+    assert counts['sent'] == counts['deleted'] == 1
+    assert sent[0]['Subject'].startswith('[INCONCLUSIF]')
+    assert not list(sent[0].iter_attachments())
+    assert ('SEARCH', (None, 'UID', '42')) in mailbox.calls
+    assert ('EXPUNGE', (b'42',)) in mailbox.calls
+
+
+def test_inventory_actions_return_to_uncached_message_list(env, monkeypatch):
+    admin = client('admin@example.com')
+    admin.post('/admin/mail-verdict/save', data=config_data())
+    scope = 'a' * 64
+    async def operation(account, deletion=None):
+        assert deletion in (None, (scope, '42'))
+        return {'scope': scope, 'messages': [], 'total': 0}
+    monkeypatch.setattr(main, 'verdict_mailbox_operation', operation)
+    assert admin.get('/admin/mail-verdict?mailbox=1').headers['cache-control'] == 'no-store'
+    payload = {'scope': scope, 'uid': '42'}
+    assert admin.post('/admin/mail-verdict/delete-message', data=payload).status_code == 303
+    async def execute(account, actor):
+        assert account['_force_message'] == (scope, '42')
+        main.processes.pop(service.SERVICE_ID)
+        return {'log': '[date] [ERROR] UID 42 : Refus SMTP confirmé : DATA | SMTP 550.'}, {'errors': 1, 'deleted': 0}
+    monkeypatch.setattr(main, 'execute_mail_verdict', execute)
+    response = admin.post('/admin/mail-verdict/send-message', data=payload)
+    assert response.status_code == 409 and 'SMTP 550' in response.json()['detail']
+    assert client('alice@example.com').post('/admin/mail-verdict/send-message', data=payload).status_code == 403

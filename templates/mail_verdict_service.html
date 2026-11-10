@@ -46,8 +46,13 @@
 <div class="scroll"><table><thead><tr><th>UID</th><th>Expéditeur et objet</th><th>Date du message</th><th>Verdict</th><th>Envoi</th><th>Action</th></tr></thead><tbody>
 {% for msg in inventory.messages %}<tr><td>{{ msg.uid }}</td><td>{{ msg.sender }}<br><strong>{{ msg.subject or '(sans objet)' }}</strong></td><td>{{ msg.date }}</td>
 <td>{{ msg.result.get('verdict', 'Non enregistré') }}{% if msg.result.get('failure') %}<br><small>{{ msg.result.failure }}</small>{% endif %}</td><td>{{ statuses.get(msg.status, 'Aucun envoi enregistré') }}{% if msg.result.get('smtp') %}<br><small>{{ msg.result.smtp }}</small>{% endif %}</td>
-<td><form class="action-form" method="post" action="/admin/mail-verdict/delete-message" data-confirm="Supprimer définitivement cet email de la boîte IMAP ?" data-toast="Email supprimé" data-redirect="/admin/mail-verdict?mailbox=1#verdict-mailbox">
-<input type="hidden" name="uid" value="{{ msg.uid }}"><input type="hidden" name="scope" value="{{ inventory.scope }}"><button class="danger">Supprimer</button></form></td></tr>
+<td><div class="actions">
+{% if msg.status not in ['ignored', 'deleted', 'sending'] %}
+<form class="action-form" method="post" action="/admin/mail-verdict/send-message" data-confirm="Analyser ce message et envoyer le rapport ? L’original sera supprimé après acceptation SMTP." data-confirm-title="Envoyer le rapport" data-confirm-button="Envoyer" data-toast="Traitement terminé">
+<input type="hidden" name="uid" value="{{ msg.uid }}"><input type="hidden" name="scope" value="{{ inventory.scope }}"><button>Envoyer le rapport</button></form>
+{% endif %}
+<form class="action-form" method="post" action="/admin/mail-verdict/delete-message" data-confirm="Supprimer définitivement cet email de la boîte IMAP ?" data-toast="Email supprimé">
+<input type="hidden" name="uid" value="{{ msg.uid }}"><input type="hidden" name="scope" value="{{ inventory.scope }}"><button class="danger">Supprimer</button></form></div></td></tr>
 {% else %}<tr><td colspan="6">Aucun message à afficher.</td></tr>{% endfor %}
 </tbody></table></div>{% endif %}</section>{% endif %}
 <script defer src="/static/auth.js"></script><script defer src="/static/mail-verdict.js"></script>{% endblock %}

@@ -22,7 +22,7 @@ document.addEventListener('submit', async event => {
     form.dataset.busy = 'true';
     try {
         if (form.dataset.confirm) {
-            const result = await Swal.fire({title: 'Confirmer la suppression', text: form.dataset.confirm, icon: 'warning', showCancelButton: true, confirmButtonText: 'Supprimer', cancelButtonText: 'Annuler', confirmButtonColor: '#9a2934', focusCancel: true});
+            const result = await Swal.fire({title: form.dataset.confirmTitle || 'Confirmer la suppression', text: form.dataset.confirm, icon: 'warning', showCancelButton: true, confirmButtonText: form.dataset.confirmButton || 'Supprimer', cancelButtonText: 'Annuler', confirmButtonColor: '#9a2934', focusCancel: true});
             if (!result.isConfirmed) return;
         }
         await apiPost(form.action, new FormData(form));
