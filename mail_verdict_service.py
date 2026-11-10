@@ -207,6 +207,44 @@ class VisibleEmail(HTMLParser):
                 self.anchor[1].append(data)
 
 
+def forwarded_original(raw):
+    """Separate the submitted message from the outer reply address."""
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    for part in message.walk():
+        if part.get_content_type() == 'message/rfc822':
+            payload = part.get_payload()
+            if isinstance(payload, list) and payload and payload[0].get('From'):
+                return payload[0].as_bytes(policy=policy.SMTP)
+    part = message.get_body(preferencelist=('plain',))
+    if not part:
+        return raw
+    content = part.get_content()
+    marker = re.search(r'(?im)^\s*(?:-{2,}\s*(?:forwarded message|message transf[ée]r[ée]|original message|message d.origine)\s*-{2,}|begin forwarded message:|d[ée]but du message transf[ée]r[ée]\s*:)\s*$', content)
+    if not marker:
+        return raw
+    fields = {'from': 'From', 'de': 'From', 'subject': 'Subject', 'objet': 'Subject',
+              'date': 'Date', 'sent': 'Date', 'envoyé': 'Date'}
+    headers = {}
+    lines = content[marker.end():].lstrip('\r\n ').splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r'^([^:]{1,30}):\s*(.*)$', line)
+        if not match:
+            break
+        name = fields.get(match[1].strip().lower())
+        if name and match[2]:
+            headers.setdefault(name, match[2])
+        index += 1
+    if not {'From', 'Subject'} <= headers.keys() or not parseaddr(headers['From'])[1]:
+        return raw
+    original = EmailMessage()
+    for name, value in headers.items():
+        original[name] = value
+    original.set_content('\n'.join(lines[index:]).lstrip('\n'))
+    return original.as_bytes(policy=policy.SMTP)
+
+
 def verdict_evidence(raw):
     evidence = compact_message(raw)
     message = BytesParser(policy=policy.default).parsebytes(raw)
@@ -471,16 +509,19 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                         if not dry:
                             state[identifier] = 'ignored'; save_state(state)
                         continue
+                    original = forwarded_original(raw)
+                    if original != raw:
+                        progress(f'UID {uid.decode()} : message transféré détecté ; analyse de l’original, réponse à la personne qui l’a soumis.')
                     score = None
                     if account.get('use_rspamd'):
-                        result = await call(scan, raw, settings)
+                        result = await call(scan, original, settings)
                         score = result['score']
                         progress(f'UID {uid.decode()} : score Rspamd {score}, action {result["action"]}.')
                     engine = account['sMoteurIA']
                     if not key:
                         raise PreprocessingError('Clé IA de l’administrateur absente.')
                     progress(f'UID {uid.decode()} : appel {engine} | modèle : {settings.get(engine.lower() + "_model", "défaut du fournisseur")}.')
-                    evidence = verdict_evidence(raw)
+                    evidence = verdict_evidence(original)
                     progress(f'UID {uid.decode()} : contexte IA | extrait : {len(evidence["visible_excerpt"])} caractères'
                              f' | domaines : {len(evidence["link_domains"])} | liens libellés : {len(evidence["labelled_links"])}.')
                     verdict = await provider_call(settings, key, evidence, active, call, progress, engine)
@@ -497,7 +538,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     if dry:
                         continue
                     stop()
-                    report = report_message(raw, recipient, smtp_from, verdict, score, received_at)
+                    report = report_message(original, recipient, smtp_from, verdict, score, received_at)
                     progress(f'UID {uid.decode()} : préparation SMTP, Message-ID {report["Message-ID"]}.')
                     state[identifier] = 'sending'; save_state(state)
                     try:
