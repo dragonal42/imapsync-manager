@@ -330,3 +330,30 @@ def test_inventory_actions_return_to_uncached_message_list(env, monkeypatch):
     response = admin.post('/admin/mail-verdict/send-message', data=payload)
     assert response.status_code == 409 and 'SMTP 550' in response.json()['detail']
     assert client('alice@example.com').post('/admin/mail-verdict/send-message', data=payload).status_code == 403
+
+
+@pytest.mark.parametrize('attached', [False, True])
+def test_forwarded_message_uses_original_sender_but_replies_to_submitter(attached):
+    from email.message import EmailMessage
+    outer = EmailMessage()
+    outer['From'] = 'submitter@example.org'
+    outer['Subject'] = 'TR: Demande de vérification'
+    original = EmailMessage()
+    original['From'] = 'original@example.net'
+    original['Subject'] = 'Facture annuelle'
+    original.set_content('Montant : 69,90 euros.')
+    if attached:
+        outer.set_content('Merci de vérifier ce mail.')
+        outer.add_attachment(original)
+    else:
+        outer.set_content('Merci de vérifier.\n\n---------- Message transféré ----------\n'
+                          'De : original@example.net\nObjet : Facture annuelle\n\nMontant : 69,90 euros.')
+    raw = outer.as_bytes()
+    extracted = service.forwarded_original(raw)
+    recipient = service.recipient_for(raw, 'service@example.org', 'robot@example.org')
+    evidence = service.verdict_evidence(extracted)
+    assert evidence['subject'] == 'Facture annuelle'
+    assert evidence['headers']['from'] == ['original@example.net']
+    report = service.report_message(extracted, recipient, 'robot@example.org', 'scam')
+    assert report['To'] == 'submitter@example.org'
+    assert 'original@example.net' in report.get_body(preferencelist=('plain',)).get_content()
