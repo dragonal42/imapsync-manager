@@ -3,10 +3,12 @@ import asyncio
 import hashlib
 import html
 import imaplib
+import io
 import json
 import re
 import ssl
 import time
+import textwrap
 import smtplib
 from datetime import datetime, timedelta, timezone
 from email import policy
@@ -15,6 +17,8 @@ from email.parser import BytesParser
 from email.utils import format_datetime, make_msgid, parseaddr
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
+
+from PIL import Image, ImageDraw, ImageFont
 
 from ai_preprocessing import PreprocessingError, checked, quote_mailbox, compact_message, provider_call, MAX_MESSAGE
 from rspamd_client import scan, RspamdError
@@ -237,6 +241,36 @@ def verdict_evidence(raw):
     return evidence
 
 
+def email_preview_png(raw, dangerous=False):
+    """Rasterize a bounded text reconstruction. Never render the original HTML."""
+    evidence = verdict_evidence(raw)
+    heading = re.sub(r'https?://[^\s<>]+', '[lien masqué]', evidence['subject'], flags=re.I)
+    excerpt = evidence['visible_excerpt'] or '(Aucun texte à afficher.)'
+    lines = textwrap.wrap(heading, 54)[:3] + [''] + textwrap.wrap(excerpt, 54)[:24]
+    width, top, spacing = 920, 118, 32
+    image = Image.new('RGB', (width, top + len(lines) * spacing + 40), '#ffffff')
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype('DejaVuSans.ttf', 22)
+        title = ImageFont.truetype('DejaVuSans-Bold.ttf', 28)
+    except OSError:
+        font, title = ImageFont.load_default(size=22), ImageFont.load_default(size=28)
+    if dangerous:
+        draw.rectangle((0, 0, width, 65), fill='#ffdc36')
+        for x in range(0, width, 60):
+            draw.polygon([(x, 0), (x + 22, 0), (x + 44, 12), (x + 22, 12)], fill='#181818')
+        draw.text((24, 20), 'SCÈNE DE CRIME — MESSAGE DANGEREUX', fill='#181818', font=title)
+    else:
+        draw.rectangle((0, 0, width, 65), fill='#e8eff7')
+        draw.text((24, 17), 'Aperçu du message', fill='#182e43', font=title)
+    draw.text((24, 77), 'Aperçu texte • Liens et images externes désactivés', fill='#52667a', font=font)
+    for index, line in enumerate(lines):
+        draw.text((24, top + index * spacing), line, fill='#182e43', font=font)
+    output = io.BytesIO()
+    image.save(output, format='PNG')
+    return output.getvalue()
+
+
 def report_message(raw, recipient, smtp_from, verdict, score=None, received_at=None):
     label, colour, description = (
         ('INCONCLUSIF', '#52667a', 'Les éléments analysés ne permettent pas de trancher.')
@@ -260,7 +294,7 @@ def report_message(raw, recipient, smtp_from, verdict, score=None, received_at=N
     body = None if summary_only else original.get_body(preferencelist=('plain',))
     excerpt = 'Contenu original omis par sécurité.' if summary_only else body.get_content()[:20000] if body else '(Pas de version texte : consultez le message original joint.)'
     details = description + (' Score Rspamd : ' + str(score) + '.' if score is not None else ' Score numérique non communiqué par le moteur IA.')
-    caution = 'Classification automatique indicative. Un résultat SAIN ne garantit pas l’absence de danger. Les pièces jointes ne sont pas exécutées.'
+    caution = 'Analyse automatisée par une IA, sans vérification humaine. Un résultat SAIN ne garantit pas l’absence de danger : restez prudent avant d’ouvrir un lien ou une pièce jointe.'
     message = EmailMessage()
     message['From'], message['To'] = smtp_from, recipient
     if summary_only:
@@ -277,6 +311,8 @@ def report_message(raw, recipient, smtp_from, verdict, score=None, received_at=N
         + '</dl><pre style="white-space:pre-wrap">' + html.escape(excerpt) + '</pre>', subtype='html')
     if not summary_only:
         message.add_attachment(raw, maintype='application', subtype='octet-stream', filename='message-original.eml')
+    message.add_attachment(email_preview_png(raw, dangerous=verdict == 'scam'),
+                           maintype='image', subtype='png', filename='apercu-email.png')
     return message
 
 

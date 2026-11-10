@@ -67,8 +67,15 @@ def test_response_before_uid_delete_and_report_content(monkeypatch,verdict,label
         assert '&lt;img' in html
         assert list(message.iter_attachments())[0].get_payload(decode=True)==RAW
     else:
-        assert not list(message.iter_attachments())
+        assert [part.get_filename() for part in message.iter_attachments()] == ['apercu-email.png']
         assert 'Original <img' not in message.as_string()
+    from io import BytesIO
+    from PIL import Image
+    preview = next(part for part in message.iter_attachments() if part.get_content_type() == 'image/png')
+    with Image.open(BytesIO(preview.get_payload(decode=True))) as image:
+        assert image.format == 'PNG'
+        assert image.getpixel((2, 30)) == ((255, 220, 54) if verdict == 'scam' else (232, 239, 247))
+    assert 'sans vérification humaine' in plain
     assert ('EXPUNGE',(b'42',)) in mailbox.calls
     assert [value for value in state.values() if isinstance(value, str)]==['deleted']
 
@@ -299,7 +306,7 @@ def test_forced_inconclusive_report_deletes_only_selected_uid_after_send(monkeyp
     counts = run(send)
     assert counts['sent'] == counts['deleted'] == 1
     assert sent[0]['Subject'].startswith('[INCONCLUSIF]')
-    assert not list(sent[0].iter_attachments())
+    assert [part.get_filename() for part in sent[0].iter_attachments()] == ['apercu-email.png']
     assert ('SEARCH', (None, 'UID', '42')) in mailbox.calls
     assert ('EXPUNGE', (b'42',)) in mailbox.calls
 
