@@ -340,7 +340,7 @@ def test_forwarded_message_uses_original_sender_but_replies_to_submitter(attache
     outer['Subject'] = 'TR: Demande de vérification'
     original = EmailMessage()
     original['From'] = 'original@example.net'
-    original['Subject'] = 'Facture annuelle'
+    original['Subject'] = 'FWD: Tr: Facture annuelle'
     original.set_content('Montant : 69,90 euros.')
     if attached:
         outer.set_content('Merci de vérifier ce mail.')
@@ -356,4 +356,7 @@ def test_forwarded_message_uses_original_sender_but_replies_to_submitter(attache
     assert evidence['headers']['from'] == ['original@example.net']
     report = service.report_message(extracted, recipient, 'robot@example.org', 'scam')
     assert report['To'] == 'submitter@example.org'
-    assert 'original@example.net' in report.get_body(preferencelist=('plain',)).get_content()
+    plain = report.get_body(preferencelist=('plain',)).get_content()
+    assert 'original@example.net' in plain
+    assert 'Objet du message vérifié : Facture annuelle' in plain
+    assert 'FWD:' not in plain
