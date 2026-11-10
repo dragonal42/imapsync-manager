@@ -30,4 +30,24 @@
 <label class="check"><input type="checkbox" name="simulation" {% if account.get('simulation',True) %}checked{% endif %}> Simulation — analyser sans envoyer ni supprimer</label>
 <p>Les clés, modèles et quotas sont ceux de l’administrateur principal ; les verdicts sont envoyés par le SMTP renseigné ci-dessus. Le score numérique est fourni uniquement si Rspamd est activé. Sa simulation globale reste prioritaire. Les listes blanche/noire ne court-circuitent pas le diagnostic de ce service.</p>
 <p>Un seul dossier, sans récursion. Les réponses automatiques et listes de diffusion sont ignorées. Une adresse From peut être usurpée : utilisez une boîte de soumission dédiée. Le message est supprimé par UID après acceptation SMTP, sans toucher aux autres messages marqués supprimés. En cas d’envoi ambigu, aucun renvoi automatique ; vérifier les traces SMTP.</p>
-<button class="save-button"><span class="save-icon">✓</span> Enregistrer</button></section></form><script defer src="/static/auth.js"></script><script defer src="/static/mail-verdict.js"></script>{% endblock %}
+<button class="save-button"><span class="save-icon">✓</span> Enregistrer</button></section></form>
+{% if account.get('host1') %}<section><h2>Reprendre des envois SMTP bloqués</h2>
+<p>Réservé aux UID indiqués comme « envoi précédent ambigu ». Vérifiez dans les journaux SMTP que les comptes rendus n’ont pas été acceptés, puis indiquez les UID de cette boîte séparés par des virgules. La reprise lance uniquement ces messages.</p>
+<form class="action-form" method="post" action="/admin/mail-verdict/retry-smtp" data-toast="Reprise SMTP lancée">
+<label>UID IMAP <input name="uids" required maxlength="250" placeholder="5, 6"></label>
+<label class="check"><input type="checkbox" name="confirmed" required> J’ai vérifié que SMTP n’a pas accepté ces comptes rendus.</label>
+<button>Relancer ces UID</button></form></section>{% endif %}
+{% if account.get('host1') %}<section id="verdict-mailbox"><h2>Messages dans la boîte de diagnostic</h2>
+<p>Les 50 derniers messages encore présents. La liste utilise la configuration enregistrée. Les simulations n’enregistrent pas de résultat par message.</p>
+<a class="button secondary" href="/admin/mail-verdict?mailbox=1#verdict-mailbox">{{ 'Actualiser' if inventory else 'Afficher les messages' }}</a>
+{% if inventory_error %}<p class="error">{{ inventory_error }}</p>{% endif %}
+{% if inventory %}<p>{{ inventory.total }} message(s) dans le dossier.</p>
+{% set statuses = {'sending': 'Envoi ambigu', 'refused': 'Refus SMTP confirmé', 'sent': 'Accepté par SMTP, suppression en attente', 'ignored': 'Ignoré', 'inconclusive_sent': 'Compte rendu accepté, original conservé', 'deleted': 'Traité'} %}
+<div class="scroll"><table><thead><tr><th>UID</th><th>Expéditeur et objet</th><th>Date du message</th><th>Verdict</th><th>Envoi</th><th>Action</th></tr></thead><tbody>
+{% for msg in inventory.messages %}<tr><td>{{ msg.uid }}</td><td>{{ msg.sender }}<br><strong>{{ msg.subject or '(sans objet)' }}</strong></td><td>{{ msg.date }}</td>
+<td>{{ msg.result.get('verdict', 'Non enregistré') }}{% if msg.result.get('failure') %}<br><small>{{ msg.result.failure }}</small>{% endif %}</td><td>{{ statuses.get(msg.status, 'Aucun envoi enregistré') }}{% if msg.result.get('smtp') %}<br><small>{{ msg.result.smtp }}</small>{% endif %}</td>
+<td><form class="action-form" method="post" action="/admin/mail-verdict/delete-message" data-confirm="Supprimer définitivement cet email de la boîte IMAP ?" data-toast="Email supprimé" data-redirect="/admin/mail-verdict?mailbox=1#verdict-mailbox">
+<input type="hidden" name="uid" value="{{ msg.uid }}"><input type="hidden" name="scope" value="{{ inventory.scope }}"><button class="danger">Supprimer</button></form></td></tr>
+{% else %}<tr><td colspan="6">Aucun message à afficher.</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}</section>{% endif %}
+<script defer src="/static/auth.js"></script><script defer src="/static/mail-verdict.js"></script>{% endblock %}

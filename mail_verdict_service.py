@@ -59,13 +59,46 @@ def send_verdict_smtp(message, settings):
     options = {'timeout': 20}
     if mode == 'ssl':
         options['context'] = ssl.create_default_context()
-    with factory(settings['smtp_host'], settings['smtp_port'], **options) as smtp:
+    smtp = factory(settings['smtp_host'], settings['smtp_port'], **options)
+    try:
         if mode == 'starttls':
             smtp.starttls(context=ssl.create_default_context())
         if settings['smtp_user']:
             smtp.login(settings['smtp_user'], settings['smtp_password'])
         if smtp.send_message(message, from_addr=settings['smtp_from']):
             raise smtplib.SMTPRecipientsRefused({})
+    finally:
+        # A failure closing the connection must not undo DATA acceptance.
+        try:
+            smtp.close()
+        except OSError:
+            pass
+
+
+def smtp_refusal(error):
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        responses = list(error.recipients.values())
+        code, reply = responses[0] if len(responses) == 1 else (None, b'')
+        stage = 'RCPT TO'
+    elif isinstance(error, (smtplib.SMTPDataError, smtplib.SMTPSenderRefused,
+                            smtplib.SMTPAuthenticationError, smtplib.SMTPConnectError,
+                            smtplib.SMTPHeloError)):
+        stage = {smtplib.SMTPDataError: 'DATA', smtplib.SMTPSenderRefused: 'MAIL FROM',
+                 smtplib.SMTPAuthenticationError: 'AUTH', smtplib.SMTPConnectError: 'connexion',
+                 smtplib.SMTPHeloError: 'EHLO/HELO'}[type(error)]
+        code, reply = error.smtp_code, error.smtp_error
+    else:
+        return None
+    if not isinstance(code, int) or not 400 <= code <= 599:
+        return None
+    text = reply.decode('utf-8', errors='replace') if isinstance(reply, bytes) else str(reply)
+    extended = re.search(r'\b[45]\.\d{1,3}\.\d{1,3}\b', text)
+    # Map the reply to fixed categories; arbitrary SMTP text can echo private content.
+    hints = [('spam|phish|malware|virus|attachment|content', 'filtre de contenu / pièce jointe'),
+             ('relay|relaying', 'relais refusé'), ('quota|mailbox full', 'quota de boîte'),
+             ('authentication|credentials', 'authentification'), ('policy|blocked', 'politique SMTP')]
+    reason = next((label for pattern, label in hints if re.search(pattern, text, re.I)), 'motif non reconnu')
+    return f'{stage} | SMTP {code}' + (f' {extended[0]}' if extended else '') + f' | {reason}'
 
 
 def test_imap_connection(account, token):
@@ -208,12 +241,15 @@ def report_message(raw, recipient, smtp_from, verdict, score=None):
     label, colour, description = LABELS[verdict]
     original = BytesParser(policy=policy.default).parsebytes(raw)
     subject = ' '.join(str(original.get('Subject', '(sans objet)')).split())[:180]
-    body = original.get_body(preferencelist=('plain',))
-    excerpt = body.get_content()[:20000] if body else '(Pas de version texte : consultez le message original joint.)'
+    summary_only = verdict in {'scam', 'spam'}
+    body = None if summary_only else original.get_body(preferencelist=('plain',))
+    excerpt = 'Contenu original omis par sécurité.' if summary_only else body.get_content()[:20000] if body else '(Pas de version texte : consultez le message original joint.)'
     details = description + (' Score Rspamd : ' + str(score) + '.' if score is not None else ' Score numérique non communiqué par le moteur IA.')
     caution = 'Classification automatique indicative. Un résultat SAIN ne garantit pas l’absence de danger. Les pièces jointes ne sont pas exécutées.'
     message = EmailMessage()
     message['From'], message['To'] = smtp_from, recipient
+    if summary_only:
+        subject = 'Compte rendu de diagnostic'
     message['Subject'] = '[' + label + '] ' + subject
     message['Date'] = format_datetime(datetime.now(timezone.utc))
     message['Message-ID'] = make_msgid()
@@ -224,8 +260,61 @@ def report_message(raw, recipient, smtp_from, verdict, score=None):
     message.add_alternative('<h1 style="color:' + colour + '">' + label + '</h1><p>' + html.escape(details)
         + '</p><p>' + html.escape(caution) + '</p><hr><h2>Message reçu : ' + html.escape(subject)
         + '</h2><pre style="white-space:pre-wrap">' + html.escape(excerpt) + '</pre>', subtype='html')
-    message.add_attachment(raw, maintype='application', subtype='octet-stream', filename='message-original.eml')
+    if not summary_only:
+        message.add_attachment(raw, maintype='application', subtype='octet-stream', filename='message-original.eml')
     return message
+
+
+def mailbox_scope(account, client):
+    validity = client.response('UIDVALIDITY')[1][0]
+    if not validity or not validity.isdigit():
+        raise PreprocessingError('UIDVALIDITY absent ; opération interrompue.')
+    return hashlib.sha256(json.dumps([account['host1'], account['user1'],
+                                      account['source_folder'], validity.decode()]).encode()).hexdigest()
+
+
+def inspect_verdict_mailbox(account, token, state, deletion=None):
+    """Read headers only, or delete one UID in the exact mailbox previously listed."""
+    client = imaplib.IMAP4_SSL(account['host1'], port=993, ssl_context=ssl.create_default_context(), timeout=30)
+    try:
+        if account.get('authmech1') == 'XOAUTH2':
+            auth = ('user=' + account['user1'] + '\x01auth=Bearer ' + token + '\x01\x01').encode()
+            checked(client.authenticate('XOAUTH2', lambda _: auth))
+        else:
+            checked(client.login(account['user1'], account['pass1']))
+        if deletion and b'UIDPLUS' not in b' '.join(checked(client.capability())).upper().split():
+            raise PreprocessingError('UIDPLUS requis pour la suppression individuelle.')
+        checked(client.select(quote_mailbox(account['source_folder']), readonly=not deletion))
+        scope = mailbox_scope(account, client)
+        if deletion:
+            expected_scope, uid = deletion
+            if scope != expected_scope:
+                raise PreprocessingError('La boîte ou ses UID ont changé. Rechargez la liste.')
+            uid = uid.encode('ascii')
+            if uid not in b' '.join(checked(client.uid('SEARCH', None, 'UID', uid))).split():
+                raise PreprocessingError('Ce message n’est plus dans la boîte. Rechargez la liste.')
+            checked(client.uid('STORE', uid, '+FLAGS.SILENT', '(\\Deleted)'))
+            checked(client.uid('EXPUNGE', uid))
+            return None
+        uids = b' '.join(checked(client.uid('SEARCH', None, 'UNDELETED'))).split()
+        messages = []
+        for uid in sorted({uid for uid in uids if uid.isdigit()}, key=int, reverse=True)[:50]:
+            rows = checked(client.uid('FETCH', uid, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])'))
+            header = next((row[1] for row in rows if isinstance(row, tuple) and isinstance(row[1], bytes)), None)
+            if header is None:
+                continue
+            msg = BytesParser(policy=policy.default).parsebytes(header[:65536])
+            uid = uid.decode()
+            identifier = scope + ':' + uid
+            messages.append(dict(uid=uid, sender=str(msg.get('From', ''))[:254],
+                                 subject=str(msg.get('Subject', ''))[:250], date=str(msg.get('Date', ''))[:100],
+                                 status=state.get(identifier, ''), result=state.get(identifier + ':result', {})))
+        return {'scope': scope, 'messages': messages, 'total': len(uids)}
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
 
 
 async def process_mailbox(account, token, settings, key, smtp_from, active, read_state, save_state, send, progress):
@@ -256,10 +345,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
         if not dry and b'UIDPLUS' not in capabilities:
             raise PreprocessingError('UIDPLUS requis pour supprimer uniquement le message envoyé. Aucun envoi effectué.')
         checked(await call(client.select, quote_mailbox(account['source_folder']), readonly=dry))
-        validity = client.response('UIDVALIDITY')[1][0]
-        if not validity or not validity.isdigit():
-            raise PreprocessingError('UIDVALIDITY absent ; aucun envoi effectué.')
-        scope = hashlib.sha256(json.dumps([account['host1'], account['user1'], account['source_folder'], validity.decode()]).encode()).hexdigest()
+        scope = mailbox_scope(account, client)
         state = read_state()
         criteria = ['ALL']  # Includes read mail, and sent-but-not-yet-expunged messages.
         days = account.get('period_days', 5)
@@ -272,6 +358,11 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
             raise PreprocessingError('Réponse UID invalide.')
         progress('Simulation : ' + ('oui' if dry else 'non') + f' | Dossier : {account["source_folder"]} | Messages trouvés : {len(uids)}')
         eligible = [uid for uid in sorted(set(uids), key=int) if state.get(scope + ':' + uid.decode()) not in {'deleted', 'ignored'}]
+        retry_uids = set(account.get('_retry_uids', ()))
+        if retry_uids:
+            eligible = [uid for uid in eligible if uid.decode() in retry_uids
+                        and state.get(scope + ':' + uid.decode()) == 'sending']
+            progress(f'Reprise SMTP ciblée | UID bloqués retrouvés : {len(eligible)} / {len(retry_uids)}.')
         handled = 0
         for uid in eligible:
             if handled >= account.get('max_messages', 50):
@@ -282,7 +373,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
             if stage in {'deleted', 'ignored'}:
                 counts['skipped'] += 1
                 continue
-            if stage == 'sending':
+            if stage == 'sending' and not retry_uids:
                 counts['errors'] += 1
                 progress(f'[ERROR] UID {uid.decode()} : envoi précédent ambigu. Vérifier le SMTP avant toute reprise ; aucun renvoi automatique.')
                 continue
@@ -335,6 +426,9 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                              f' | {getattr(verdict, "diagnostic", "réponse validée")}.')
                     progress({'usage': getattr(verdict, 'usage', {})})
                     counts['analysed'] += 1
+                    if not dry:
+                        state[identifier + ':result'] = {'verdict': LABELS.get(verdict, ('INCONCLUSIF',))[0]}
+                        save_state(state)
                     if verdict not in LABELS:
                         raise PreprocessingError('Verdict incertain ; aucun envoi ni suppression.')
                     progress(f'UID {uid.decode()} : {LABELS[verdict][0]}.')
@@ -344,7 +438,17 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     report = report_message(raw, recipient, smtp_from, verdict, score)
                     progress(f'UID {uid.decode()} : préparation SMTP, Message-ID {report["Message-ID"]}.')
                     state[identifier] = 'sending'; save_state(state)
-                    await call(send, report)
+                    try:
+                        await call(send, report)
+                    except smtplib.SMTPException as error:
+                        refusal = smtp_refusal(error)
+                        if refusal is None:
+                            raise
+                        state[identifier] = 'refused'
+                        state[identifier + ':result']['smtp'] = refusal
+                        save_state(state)
+                        raise PreprocessingError('Refus SMTP confirmé : ' + refusal +
+                                                 '. Original conservé ; relance autorisée.') from None
                     state[identifier] = 'sent'; save_state(state)
                     counts['sent'] += 1
                 if stage == 'sent':
@@ -359,6 +463,10 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                 progress(f'UID {uid.decode()} : réponse acceptée par SMTP ; original supprimé.')
             except Exception as error:
                 counts['errors'] += 1
+                if (not dry and state.get(identifier) not in {'sending', 'refused', 'sent', 'deleted'}
+                        and state.get(identifier + ':result', {}).get('verdict') != 'INCONCLUSIF'):
+                    state.setdefault(identifier + ':result', {})['failure'] = 'Analyse ou lecture incomplète ; voir le journal.'
+                    save_state(state)
                 detail = str(error) if isinstance(error, (PreprocessingError, RspamdError)) else transport_error(error)
                 progress(f'[ERROR] UID {uid.decode()} : {detail}')
                 for line in getattr(error, 'debug', '').splitlines():

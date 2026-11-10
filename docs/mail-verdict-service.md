@@ -25,7 +25,7 @@ Le destinataire est **le From du message reçu par cette boîte**, pas le Reply-
 - **[SPAM]** en orange : indésirable/publicité.
 - **[SAIN]** en vert : aucun signal suspect identifié (aucune garantie absolue).
 
-Le compte rendu comprend le verdict, le score Rspamd si demandé, puis le texte du message original (limité à 20 000 caractères), échappé pour éviter l'affichage de contenu HTML actif. L'original complet est joint en `.eml`. Une version uniquement HTML reste consultable dans cette pièce jointe. Un verdict incertain ne déclenche ni envoi ni suppression.
+Pour [DANGEREUX] et [SPAM], le compte rendu contient uniquement le verdict et le score Rspamd éventuel : ni sujet original, ni lien, ni pièce jointe. Pour [SAIN], il inclut le texte du message original (limité à 20 000 caractères), échappé pour éviter l'affichage de contenu HTML actif. L'original complet est joint en `.eml`. Une version uniquement HTML reste consultable dans cette pièce jointe. Un verdict incertain ne déclenche ni envoi ni suppression.
 
 ## Reprise et journaux
 
@@ -34,7 +34,8 @@ La suppression se fait **après acceptation du compte rendu par SMTP**, uniqueme
 Le fichier persistant `data/mail_verdict_state.json` mémorise les étapes d'envoi par serveur, boîte, dossier, UIDVALIDITY et UID. Conserver ce fichier avec le volume de données : le supprimer peut entraîner des renvois. Vider les logs ou supprimer les paramètres ne l'efface pas.
 
 - Envoi confirmé, suppression échouée : le prochain passage reprend uniquement la suppression, sans renvoyer le compte rendu.
-- Envoi ambigu (erreur SMTP, arrêt pendant l'envoi ou crash) : aucun renvoi automatique. Le journal indique l'UID et, en Debug, le Message-ID à rechercher dans les traces SMTP. Vérifier manuellement l'acceptation/livraison avant de déplacer le message ou d'intervenir sur son état. Il n'y a pas de bouton de relance forcée.
+- Refus SMTP explicite (par exemple DATA 550) : original conservé et nouvelle tentative autorisée au prochain passage. Le journal indique l’étape SMTP, le code et une catégorie de motif, sans afficher la réponse brute.
+- Envoi ambigu (connexion perdue, arrêt pendant l’envoi ou crash) : aucun renvoi automatique. Vérifiez les traces SMTP à l’aide du Message-ID indiqué en Debug. Si le refus est confirmé, utilisez **Reprendre des envois SMTP bloqués** dans /admin/mail-verdict et indiquez uniquement les UID concernés. La reprise respecte la boîte, l’UIDVALIDITY et les filtres de la tâche.
 - Arrêter demande l'arrêt coopératif : un appel réseau en cours termine ou atteint son délai avant la libération du service. La configuration ne peut pas être modifiée pendant une exécution.
 
 Les logs sont réservés aux administrateurs, avec les mêmes pages de consultation, suppression et durée de conservation que les autres tâches. Le mode Debug conserve les étapes détaillées et les diagnostics fournisseur expurgés ; sinon restent le résultat, les compteurs, les erreurs et les tokens communiqués par l'IA. Les erreurs/avertissements figurent aussi dans le rapport quotidien. Un passage réussi sans activité ne conserve pas de journal.
