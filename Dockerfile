@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     python3 \
     python3-pip \
+    fonts-dejavu-core \
     msmtp \
     msmtp-mta \
     gettext-base \
@@ -44,7 +45,7 @@ RUN apt-get update && apt-get install -y \
     
 WORKDIR /app
 # Installation des modules Python requis
-RUN pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart requests --break-system-packages
+RUN pip3 install --no-cache-dir fastapi uvicorn jinja2 python-multipart requests "Pillow>=10.1" --break-system-packages
 
 COPY main.py mail_verdict_service.py sender_export.py rspamd_client.py ai_quotas.py ai_preprocessing.py run_logging.py audit_logging.py sender_rules.py /app/
 COPY msmtp.conf.template /app/msmtp.conf.template

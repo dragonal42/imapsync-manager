@@ -58,12 +58,24 @@ def test_response_before_uid_delete_and_report_content(monkeypatch,verdict,label
     assert message['Auto-Submitted']=='auto-replied'
     html=message.get_body(preferencelist=('html',)).get_content()
     assert '<script>' not in html and '<img' not in html
+    plain = message.get_body(preferencelist=('plain',)).get_content()
+    for expected in ('01/10/2026 10:00:00', 'Objet du message vérifié', 'Expéditeur du message vérifié', 'submitter@example.org'):
+        assert expected in plain and expected in html
+    assert 'Test <script>alert(1)</script>' in plain
+    assert 'Test &lt;script&gt;alert(1)&lt;/script&gt;' in html
     if verdict == 'legitimate':
         assert '&lt;img' in html
         assert list(message.iter_attachments())[0].get_payload(decode=True)==RAW
     else:
-        assert not list(message.iter_attachments())
+        assert [part.get_filename() for part in message.iter_attachments()] == ['apercu-email.png']
         assert 'Original <img' not in message.as_string()
+    from io import BytesIO
+    from PIL import Image
+    preview = next(part for part in message.iter_attachments() if part.get_content_type() == 'image/png')
+    with Image.open(BytesIO(preview.get_payload(decode=True))) as image:
+        assert image.format == 'PNG'
+        assert image.getpixel((2, 30)) == ((255, 220, 54) if verdict == 'scam' else (232, 239, 247))
+    assert 'sans vérification humaine' in plain
     assert ('EXPUNGE',(b'42',)) in mailbox.calls
     assert [value for value in state.values() if isinstance(value, str)]==['deleted']
 
@@ -294,7 +306,7 @@ def test_forced_inconclusive_report_deletes_only_selected_uid_after_send(monkeyp
     counts = run(send)
     assert counts['sent'] == counts['deleted'] == 1
     assert sent[0]['Subject'].startswith('[INCONCLUSIF]')
-    assert not list(sent[0].iter_attachments())
+    assert [part.get_filename() for part in sent[0].iter_attachments()] == ['apercu-email.png']
     assert ('SEARCH', (None, 'UID', '42')) in mailbox.calls
     assert ('EXPUNGE', (b'42',)) in mailbox.calls
 

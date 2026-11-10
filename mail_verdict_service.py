@@ -3,10 +3,12 @@ import asyncio
 import hashlib
 import html
 import imaplib
+import io
 import json
 import re
 import ssl
 import time
+import textwrap
 import smtplib
 from datetime import datetime, timedelta, timezone
 from email import policy
@@ -15,6 +17,8 @@ from email.parser import BytesParser
 from email.utils import format_datetime, make_msgid, parseaddr
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
+
+from PIL import Image, ImageDraw, ImageFont
 
 from ai_preprocessing import PreprocessingError, checked, quote_mailbox, compact_message, provider_call, MAX_MESSAGE
 from rspamd_client import scan, RspamdError
@@ -237,17 +241,60 @@ def verdict_evidence(raw):
     return evidence
 
 
-def report_message(raw, recipient, smtp_from, verdict, score=None):
+def email_preview_png(raw, dangerous=False):
+    """Rasterize a bounded text reconstruction. Never render the original HTML."""
+    evidence = verdict_evidence(raw)
+    heading = re.sub(r'https?://[^\s<>]+', '[lien masqué]', evidence['subject'], flags=re.I)
+    excerpt = evidence['visible_excerpt'] or '(Aucun texte à afficher.)'
+    lines = textwrap.wrap(heading, 54)[:3] + [''] + textwrap.wrap(excerpt, 54)[:24]
+    width, top, spacing = 920, 118, 32
+    image = Image.new('RGB', (width, top + len(lines) * spacing + 40), '#ffffff')
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype('DejaVuSans.ttf', 22)
+        title = ImageFont.truetype('DejaVuSans-Bold.ttf', 28)
+    except OSError:
+        font, title = ImageFont.load_default(size=22), ImageFont.load_default(size=28)
+    if dangerous:
+        draw.rectangle((0, 0, width, 65), fill='#ffdc36')
+        for x in range(0, width, 60):
+            draw.polygon([(x, 0), (x + 22, 0), (x + 44, 12), (x + 22, 12)], fill='#181818')
+        draw.text((24, 20), 'SCÈNE DE CRIME — MESSAGE DANGEREUX', fill='#181818', font=title)
+    else:
+        draw.rectangle((0, 0, width, 65), fill='#e8eff7')
+        draw.text((24, 17), 'Aperçu du message', fill='#182e43', font=title)
+    draw.text((24, 77), 'Aperçu texte • Liens et images externes désactivés', fill='#52667a', font=font)
+    for index, line in enumerate(lines):
+        draw.text((24, top + index * spacing), line, fill='#182e43', font=font)
+    output = io.BytesIO()
+    image.save(output, format='PNG')
+    return output.getvalue()
+
+
+def report_message(raw, recipient, smtp_from, verdict, score=None, received_at=None):
     label, colour, description = (
         ('INCONCLUSIF', '#52667a', 'Les éléments analysés ne permettent pas de trancher.')
         if verdict == 'uncertain' else LABELS[verdict])
     original = BytesParser(policy=policy.default).parsebytes(raw)
     subject = ' '.join(str(original.get('Subject', '(sans objet)')).split())[:180]
     summary_only = verdict in {'scam', 'spam', 'uncertain'}
+    def reference(value):
+        text = ' '.join(str(value).split())
+        if summary_only:
+            text = re.sub(r'https?://[^\s<>]+', '[lien masqué]', text, flags=re.I)
+        return text[:250]
+    references = {
+        'Reçu dans la boîte de vérification (UTC)': received_at.strftime('%d/%m/%Y %H:%M:%S') if received_at else 'Date indisponible',
+        'Objet du message vérifié': reference(original.get('Subject') or '(sans objet)'),
+        'Expéditeur du message vérifié (From)': reference(original.get('From') or '(non renseigné)'),
+    }
+    plain_references = '\n'.join(f'{key} : {value}' for key, value in references.items())
+    html_references = ''.join(f'<dt><strong>{html.escape(key)}</strong></dt><dd>{html.escape(value)}</dd>'
+                              for key, value in references.items())
     body = None if summary_only else original.get_body(preferencelist=('plain',))
     excerpt = 'Contenu original omis par sécurité.' if summary_only else body.get_content()[:20000] if body else '(Pas de version texte : consultez le message original joint.)'
     details = description + (' Score Rspamd : ' + str(score) + '.' if score is not None else ' Score numérique non communiqué par le moteur IA.')
-    caution = 'Classification automatique indicative. Un résultat SAIN ne garantit pas l’absence de danger. Les pièces jointes ne sont pas exécutées.'
+    caution = 'Analyse automatisée par une IA, sans vérification humaine. Un résultat SAIN ne garantit pas l’absence de danger : restez prudent avant d’ouvrir un lien ou une pièce jointe.'
     message = EmailMessage()
     message['From'], message['To'] = smtp_from, recipient
     if summary_only:
@@ -258,12 +305,14 @@ def report_message(raw, recipient, smtp_from, verdict, score=None):
     message['Auto-Submitted'] = 'auto-replied'
     message['X-Auto-Response-Suppress'] = 'All'
     message['X-IMAPSync-Verdict'] = label
-    message.set_content(label + '\n' + details + '\n' + caution + '\n\nMessage reçu : ' + subject + '\n\n' + excerpt)
+    message.set_content(label + '\n' + details + '\n' + caution + '\n\n' + plain_references + '\n\n' + excerpt)
     message.add_alternative('<h1 style="color:' + colour + '">' + label + '</h1><p>' + html.escape(details)
-        + '</p><p>' + html.escape(caution) + '</p><hr><h2>Message reçu : ' + html.escape(subject)
-        + '</h2><pre style="white-space:pre-wrap">' + html.escape(excerpt) + '</pre>', subtype='html')
+        + '</p><p>' + html.escape(caution) + '</p><hr><dl>' + html_references
+        + '</dl><pre style="white-space:pre-wrap">' + html.escape(excerpt) + '</pre>', subtype='html')
     if not summary_only:
         message.add_attachment(raw, maintype='application', subtype='octet-stream', filename='message-original.eml')
+    message.add_attachment(email_preview_png(raw, dangerous=verdict == 'scam'),
+                           maintype='image', subtype='png', filename='apercu-email.png')
     return message
 
 
@@ -400,13 +449,13 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     if b'\\Deleted' in info:
                         counts['skipped'] += 1
                         continue
+                    parsed = imaplib.Internaldate2tuple(info)
+                    received_at = datetime.fromtimestamp(time.mktime(parsed), timezone.utc) if parsed else None
                     if days:
-                        stamp = re.search(rb'INTERNALDATE "([^"]+)"', info)
-                        parsed = imaplib.Internaldate2tuple(info)
-                        if not stamp or parsed is None:
+                        if received_at is None:
                             raise PreprocessingError('Date IMAP invalide ; message conservé.')
                         # Internaldate2tuple returns local time; mktime restores the timestamp.
-                        if time.mktime(parsed) < (datetime.now(timezone.utc) - timedelta(days=days)).timestamp():
+                        if received_at < datetime.now(timezone.utc) - timedelta(days=days):
                             counts['skipped'] += 1
                             continue
                     handled += 1
@@ -448,7 +497,7 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     if dry:
                         continue
                     stop()
-                    report = report_message(raw, recipient, smtp_from, verdict, score)
+                    report = report_message(raw, recipient, smtp_from, verdict, score, received_at)
                     progress(f'UID {uid.decode()} : préparation SMTP, Message-ID {report["Message-ID"]}.')
                     state[identifier] = 'sending'; save_state(state)
                     try:
