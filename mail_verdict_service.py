@@ -245,9 +245,14 @@ def forwarded_original(raw):
     return original.as_bytes(policy=policy.SMTP)
 
 
+def verdict_subject(value):
+    return re.sub(r'^(?:\s*(?:fwd|fw|tr)\s*:\s*)+', '', str(value), flags=re.I).strip()
+
+
 def verdict_evidence(raw):
     evidence = compact_message(raw)
     message = BytesParser(policy=policy.default).parsebytes(raw)
+    evidence['subject'] = verdict_subject(message.get('Subject', ''))[:500]
     parser = VisibleEmail()
     part = message.get_body(preferencelist=('html', 'plain'))
     excerpt = ''
@@ -314,7 +319,7 @@ def report_message(raw, recipient, smtp_from, verdict, score=None, received_at=N
         ('INCONCLUSIF', '#52667a', 'Les éléments analysés ne permettent pas de trancher.')
         if verdict == 'uncertain' else LABELS[verdict])
     original = BytesParser(policy=policy.default).parsebytes(raw)
-    subject = ' '.join(str(original.get('Subject', '(sans objet)')).split())[:180]
+    subject = ' '.join(verdict_subject(original.get('Subject', '')).split())[:180] or '(sans objet)'
     summary_only = verdict in {'scam', 'spam', 'uncertain'}
     def reference(value):
         text = ' '.join(str(value).split())
@@ -323,7 +328,7 @@ def report_message(raw, recipient, smtp_from, verdict, score=None, received_at=N
         return text[:250]
     references = {
         'Reçu dans la boîte de vérification (UTC)': received_at.strftime('%d/%m/%Y %H:%M:%S') if received_at else 'Date indisponible',
-        'Objet du message vérifié': reference(original.get('Subject') or '(sans objet)'),
+        'Objet du message vérifié': reference(verdict_subject(original.get('Subject', '')) or '(sans objet)'),
         'Expéditeur du message vérifié (From)': reference(original.get('From') or '(non renseigné)'),
     }
     plain_references = '\n'.join(f'{key} : {value}' for key, value in references.items())
@@ -396,7 +401,7 @@ def inspect_verdict_mailbox(account, token, state, deletion=None):
             uid = uid.decode()
             identifier = scope + ':' + uid
             messages.append(dict(uid=uid, sender=str(msg.get('From', ''))[:254],
-                                 subject=str(msg.get('Subject', ''))[:250], date=str(msg.get('Date', ''))[:100],
+                                 subject=verdict_subject(msg.get('Subject', ''))[:250], date=str(msg.get('Date', ''))[:100],
                                  status=state.get(identifier, ''), result=state.get(identifier + ':result', {})))
         return {'scope': scope, 'messages': messages, 'total': len(uids)}
     finally:
