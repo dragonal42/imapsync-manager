@@ -463,7 +463,8 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                 progress(f'UID {uid.decode()} : réponse acceptée par SMTP ; original supprimé.')
             except Exception as error:
                 counts['errors'] += 1
-                if not dry and state.get(identifier) not in {'sending', 'refused', 'sent', 'deleted'}:
+                if (not dry and state.get(identifier) not in {'sending', 'refused', 'sent', 'deleted'}
+                        and state.get(identifier + ':result', {}).get('verdict') != 'INCONCLUSIF'):
                     state.setdefault(identifier + ':result', {})['failure'] = 'Analyse ou lecture incomplète ; voir le journal.'
                     save_state(state)
                 detail = str(error) if isinstance(error, (PreprocessingError, RspamdError)) else transport_error(error)
