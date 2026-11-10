@@ -58,6 +58,11 @@ def test_response_before_uid_delete_and_report_content(monkeypatch,verdict,label
     assert message['Auto-Submitted']=='auto-replied'
     html=message.get_body(preferencelist=('html',)).get_content()
     assert '<script>' not in html and '<img' not in html
+    plain = message.get_body(preferencelist=('plain',)).get_content()
+    for expected in ('01/10/2026 10:00:00', 'Objet du message vérifié', 'Expéditeur du message vérifié', 'submitter@example.org'):
+        assert expected in plain and expected in html
+    assert 'Test <script>alert(1)</script>' in plain
+    assert 'Test &lt;script&gt;alert(1)&lt;/script&gt;' in html
     if verdict == 'legitimate':
         assert '&lt;img' in html
         assert list(message.iter_attachments())[0].get_payload(decode=True)==RAW
