@@ -238,10 +238,12 @@ def verdict_evidence(raw):
 
 
 def report_message(raw, recipient, smtp_from, verdict, score=None):
-    label, colour, description = LABELS[verdict]
+    label, colour, description = (
+        ('INCONCLUSIF', '#52667a', 'Les éléments analysés ne permettent pas de trancher.')
+        if verdict == 'uncertain' else LABELS[verdict])
     original = BytesParser(policy=policy.default).parsebytes(raw)
     subject = ' '.join(str(original.get('Subject', '(sans objet)')).split())[:180]
-    summary_only = verdict in {'scam', 'spam'}
+    summary_only = verdict in {'scam', 'spam', 'uncertain'}
     body = None if summary_only else original.get_body(preferencelist=('plain',))
     excerpt = 'Contenu original omis par sécurité.' if summary_only else body.get_content()[:20000] if body else '(Pas de version texte : consultez le message original joint.)'
     details = description + (' Score Rspamd : ' + str(score) + '.' if score is not None else ' Score numérique non communiqué par le moteur IA.')
@@ -346,9 +348,16 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
             raise PreprocessingError('UIDPLUS requis pour supprimer uniquement le message envoyé. Aucun envoi effectué.')
         checked(await call(client.select, quote_mailbox(account['source_folder']), readonly=dry))
         scope = mailbox_scope(account, client)
+        selected = account.get('_force_message')
+        if selected and selected[0] != scope:
+            raise PreprocessingError('La boîte ou ses UID ont changé. Rechargez la liste.')
+        if selected and dry:
+            raise PreprocessingError('Désactivez la simulation avant l’envoi du rapport.')
         state = read_state()
         criteria = ['ALL']  # Includes read mail, and sent-but-not-yet-expunged messages.
-        days = account.get('period_days', 5)
+        days = 0 if selected else account.get('period_days', 5)
+        if selected:
+            criteria = ['UID', selected[1]]
         if days:
             since = datetime.now(timezone.utc) - timedelta(days=days + 1)
             months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split()
@@ -358,6 +367,10 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
             raise PreprocessingError('Réponse UID invalide.')
         progress('Simulation : ' + ('oui' if dry else 'non') + f' | Dossier : {account["source_folder"]} | Messages trouvés : {len(uids)}')
         eligible = [uid for uid in sorted(set(uids), key=int) if state.get(scope + ':' + uid.decode()) not in {'deleted', 'ignored'}]
+        if selected:
+            eligible = [uid for uid in eligible if uid.decode() == selected[1]]
+            if not eligible:
+                raise PreprocessingError('Message absent ou déjà exclu du traitement.')
         retry_uids = set(account.get('_retry_uids', ()))
         if retry_uids:
             eligible = [uid for uid in eligible if uid.decode() in retry_uids
@@ -429,9 +442,9 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                     if not dry:
                         state[identifier + ':result'] = {'verdict': LABELS.get(verdict, ('INCONCLUSIF',))[0]}
                         save_state(state)
-                    if verdict not in LABELS:
+                    if verdict not in LABELS and not (selected and verdict == 'uncertain'):
                         raise PreprocessingError('Verdict incertain ; aucun envoi ni suppression.')
-                    progress(f'UID {uid.decode()} : {LABELS[verdict][0]}.')
+                    progress(f'UID {uid.decode()} : {LABELS.get(verdict, ("INCONCLUSIF",))[0]}.')
                     if dry:
                         continue
                     stop()

@@ -672,7 +672,34 @@ async def service_form(request: Request, mailbox: bool = False):
             inventory = await verdict_mailbox_operation(account)
         except HTTPException as error:
             inventory_error = error.detail
-    return render(request, 'mail_verdict_service.html', account=account, inventory=inventory, inventory_error=inventory_error)
+    response = render(request, 'mail_verdict_service.html', account=account, inventory=inventory, inventory_error=inventory_error)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@app.post('/admin/mail-verdict/send-message')
+async def service_send_message(request: Request):
+    require_admin(request)
+    form = await request.form()
+    uid, scope = str(form.get('uid', '')), str(form.get('scope', ''))
+    if not re.fullmatch(r'[1-9][0-9]{0,9}', uid) or not re.fullmatch(r'[0-9a-f]{64}', scope):
+        raise HTTPException(400, 'UID ou boîte invalide. Rechargez la liste.')
+    config = load_config()
+    account = copy.deepcopy(config.get('mail_verdict_service', {}))
+    if not account:
+        raise HTTPException(400, 'Enregistrez d’abord la boîte de diagnostic.')
+    if SERVICE_ID in processes:
+        raise HTTPException(409, 'Attendez la fin du diagnostic avant cet envoi.')
+    if not any(u['email'] == ADMIN_EMAIL and u.get('enabled', True) for u in config['users']):
+        raise HTTPException(400, 'Administrateur principal absent ou désactivé.')
+    account['_force_message'] = (scope, uid)
+    processes[SERVICE_ID] = {'owner': ADMIN_EMAIL, 'cancelled': False, 'process': None}
+    audit('MAIL_VERDICT_SEND_MESSAGE', request.state.user, uid=uid)
+    run, counts = await execute_mail_verdict(account, request.state.user)
+    if not counts or counts['errors'] or counts['deleted'] != 1:
+        errors = [line.split('[ERROR]', 1)[1].strip() for line in run['log'].splitlines() if '] [ERROR]' in line]
+        raise HTTPException(409, errors[-1] if errors else 'Aucun rapport envoyé : message ignoré, absent ou traitement arrêté.')
+    return RedirectResponse('/admin/mail-verdict?mailbox=1#verdict-mailbox', status_code=303)
 
 
 @app.post('/admin/mail-verdict/delete-message')
@@ -905,6 +932,8 @@ async def execute_mail_verdict(account, actor):
         if run['status'] in {'Erreur', 'Succès avec avertissement'}:
             with CONFIG_FILE.with_name('daily_errors.log').open('a', encoding='utf-8') as report:
                 report.write('[' + run['finished'] + '] [' + ADMIN_EMAIL + '] Service diagnostic : ' + run['status'] + '\n')
+
+    return run, counts
 
 
 @app.get("/ai/settings")
