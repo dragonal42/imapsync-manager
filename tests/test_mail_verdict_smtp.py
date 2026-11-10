@@ -16,8 +16,7 @@ def test_dedicated_transport_uses_saved_config_not_environment(monkeypatch,mode)
     class SMTP:
         def __init__(self,host,port,**kwargs):
             calls.append(('connect',host,port,kwargs))
-        def __enter__(self): return self
-        def __exit__(self,*args): pass
+        def close(self): raise OSError("disconnect after DATA")
         def starttls(self,**kwargs): calls.append(('tls',kwargs))
         def login(self,user,password): calls.append(('login',user,password))
         def send_message(self,message,**kwargs): calls.append(('send',message,kwargs)); return {}
