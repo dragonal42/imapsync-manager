@@ -12,7 +12,7 @@ import smtplib
 import ssl
 import tempfile
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from email.message import EmailMessage
@@ -1099,6 +1099,8 @@ async def save_account(request: Request, account_id: str = ""):
         account[key] = value
     
     # Gérer les options de suppression
+    if "resync_flags" in form:
+        account["resync_flags"] = flag_sync_setting(form)
     account["delete1"] = str(form.get("delete1", "off"))
     account["delete2"] = "off"  # Désactivé par défaut pour la destination
     for side in (("1", "2") if sync else ("1",)):
@@ -1243,6 +1245,11 @@ async def manual_sync(request: Request):
         account["authmech" + side] = mech
         account["pass" + side] = str(form.get("password" + side, ""))
         account["token" + side] = str(form.get("oauth2_token" + side, ""))
+        if mech == "XOAUTH2" and not (ai_only or sender_export):
+            refresh = str(form.get("refresh_oauth2_token" + side, ""))
+            provider = str(form.get("provider_oauth2_token" + side, ""))
+            if refresh and provider in OAUTH_CONFIG:
+                account["refresh" + side], account["provider" + side] = refresh, provider
         if not account[("token" if mech == "XOAUTH2" else "pass") + side]:
             raise HTTPException(400, "Renseignez les identifiants de la messagerie " + side)
     if sender_export:
@@ -1279,6 +1286,7 @@ async def manual_sync(request: Request):
                        sMoteurIA=engine, nPeriodeJours=days, source_folder=folder, ai_dry=mode == "preview",
                        ai_recursive=form.get("ai_recursive") == "on", ai_recheck=form.get("ai_recheck") == "on")
     else:
+        account["resync_flags"] = flag_sync_setting(form)
         account["options"] = ["--" + f for f in ("delete1", "delete2", "dry", "justlogin", "justfolders", "justfoldersizes") if form.get(f) == "on"]
         try:
             transfer_days = int(form.get("transfer_days", "0"))
@@ -1422,21 +1430,62 @@ async def oauth_callback(request: Request, state: str = "", code: str = "", erro
 
 async def refresh_access_token(account, side, private_values):
     provider = account["provider" + side]
+    started = time.monotonic()
+    previous_refresh = account["refresh" + side]
     response = await asyncio.to_thread(requests.post, OAUTH_CONFIG[provider]["token_url"],
         data={**oauth_credentials(provider), "refresh_token": account["refresh" + side], "grant_type": "refresh_token"}, timeout=20)
     response.raise_for_status()
     tokens = response.json()
     token = tokens["access_token"]
+    if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+        raise ValueError("Jeton OAuth invalide")
     private_values.append(token)
+    try:
+        expires = float(tokens.get("expires_in", 3600))
+        if not 0 < expires < float("inf"):
+            raise ValueError()
+    except (ValueError, TypeError, OverflowError):
+        expires = 3600
+    account["_oauth_renew" + side] = started + min(3000, max(1, expires * 0.8))
     if tokens.get("refresh_token"):
         account["refresh" + side] = tokens["refresh_token"]
         private_values.append(tokens["refresh_token"])
         fresh = load_config()
         for current in fresh["accounts"]:
-            if str(current["id"]) == str(account["id"]):
+            if (str(current["id"]) == str(account["id"])
+                    and current.get("refresh" + side) == previous_refresh):
                 current["refresh" + side] = tokens["refresh_token"]
-        save_config(fresh)
+                save_config(fresh)
+                break
     return token
+
+
+def write_oauth_token(path, token):
+    pending = path.with_suffix(".new")
+    with os.fdopen(os.open(pending, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w", encoding="utf-8") as file:
+        file.write(token + "\n")
+    os.replace(pending, path)
+
+
+async def maintain_imap_token(account, side, path, private_values, warnings):
+    warning = f"Avertissement OAuth (serveur {side}) : renouvellement en cours de transfert impossible ; nouvel essai dans 30 secondes."
+    while True:
+        due = account.get("_oauth_renew" + side, time.monotonic() + 3000)
+        await asyncio.sleep(max(0, due - time.monotonic()))
+        try:
+            token = await refresh_access_token(account, side, private_values)
+            write_oauth_token(path, token)
+        except (requests.RequestException, ValueError, KeyError, OSError):
+            if warning not in warnings:
+                warnings.append(warning)
+            account["_oauth_renew" + side] = time.monotonic() + 30
+
+
+def flag_sync_setting(form):
+    mode = form.get("resync_flags", "auto")
+    if mode not in {"auto", "on", "off"}:
+        raise HTTPException(400, "Réglage des indicateurs IMAP invalide.")
+    return mode
 
 
 async def execute(account, actor):
@@ -1466,6 +1515,8 @@ async def execute(account, actor):
         return (details + "\n\n" if debug and details else "") + summary
 
     execution_dir = tempfile.TemporaryDirectory(prefix="imapsync-")
+    token_paths = {}
+    token_tasks = []
     try:
         cmd = ["imapsync", "--noreleasecheck", "--noid", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
                "--pidfile", str(Path(execution_dir.name) / "imapsync.pid")]
@@ -1475,6 +1526,9 @@ async def execute(account, actor):
         if "--justfoldersizes" not in cmd:
             cmd += ["--nofoldersizes", "--nofoldersizesatend"]
         sync = account.get("bActiverSynchro", True)
+        flags = account.get("resync_flags", "auto")
+        if sync and (flags == "off" or (flags == "auto" and account["host2"].lower().rstrip(".") == "imap.gmail.com")):
+            cmd.append("--noresyncflags")
         if sync and account.get("delete1") == "on" and "--delete1" not in cmd:
             cmd.append("--delete1")
         if sync and account.get("delete2") == "on" and "--delete2" not in cmd:
@@ -1484,13 +1538,16 @@ async def execute(account, actor):
         for side in (("1", "2") if sync else ("1",)):
             cmd += ["--host" + side, account["host" + side], "--user" + side, account["user" + side]]
             if account.get("authmech" + side) == "XOAUTH2":
-                if account.get("token" + side):
-                    cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, account["token" + side]]
-                    continue
-                token = await refresh_access_token(account, side, private_values)
+                token = account.get("token" + side)
+                if account.get("refresh" + side) or not token:
+                    token = await refresh_access_token(account, side, private_values)
                 if side == "1":
                     source_token = token
-                cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, token]
+                path = Path(execution_dir.name) / ("oauth-" + side)
+                write_oauth_token(path, token)
+                if account.get("refresh" + side):
+                    token_paths[side] = path
+                cmd += ["--authmech" + side, "XOAUTH2", "--oauthaccesstoken" + side, str(path)]
             else:
                 cmd += ["--password" + side, account.get("pass" + side, "")]
         if account.get("bPretraitementIA") or not sync:
@@ -1550,8 +1607,8 @@ async def execute(account, actor):
                 # A long preprocessing phase must not launch imapsync with expired credentials.
                 if time.monotonic() - auth_started >= 60 and not active["cancelled"]:
                     for side in ("1", "2"):
-                        if account.get("authmech" + side) == "XOAUTH2":
-                            cmd[cmd.index("--oauthaccesstoken" + side) + 1] = await refresh_access_token(account, side, private_values)
+                        if side in token_paths:
+                            write_oauth_token(token_paths[side], await refresh_access_token(account, side, private_values))
         if active["cancelled"]:
             status = "Annulée"
         elif not sync:
@@ -1560,6 +1617,8 @@ async def execute(account, actor):
             cmd += ["--exclude", TECHNICAL_FOLDER_EXCLUDE]
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             active["process"] = process
+            token_tasks = [asyncio.create_task(maintain_imap_token(account, side, path, private_values, warnings))
+                           for side, path in token_paths.items()]
             # Keep a bounded tail; never expose passwords or OAuth tokens in history.
             last_update = 0
             while chunk := await process.stdout.read(8192):
@@ -1601,6 +1660,11 @@ async def execute(account, actor):
     except Exception:
         note = "Échec de connexion, d'authentification ou de lancement. Vérifiez les paramètres IMAP/OAuth."
     finally:
+        for task in token_tasks:
+            task.cancel()
+        for task in token_tasks:
+            with suppress(asyncio.CancelledError):
+                await task
         run["log"] = log_snapshot(status)
         config = load_config()
         finished = datetime.now(timezone.utc).isoformat(timespec="seconds")

@@ -297,3 +297,9 @@ Dans **Mes paramètres IA**, renseigner une clé API Anthropic ou OpenAI et choi
 Choisir ensuite **Claude** ou **OpenAI** dans une configuration ou dans **Analyse IA** sur la page manuelle. Commencer en simulation. Ces deux moteurs reçoivent les mêmes métadonnées que Mistral et Gemini (objet, en-têtes sélectionnés, URLs), sans corps complet ni pièces jointes. Les refus, réponses tronquées et lots dont les identifiants ne correspondent pas n’entraînent aucun déplacement. Les journaux cumulent les tokens retournés par le fournisseur. Un quota OpenAI explicitement épuisé suspend les appels jusqu’au lendemain UTC sans réessayer pendant l’exécution.
 
 Claude utilise [Messages](https://platform.claude.com/docs/en/api/http/messages) ; OpenAI utilise [Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) avec `store: false`. Il faut une clé API du fournisseur ; un abonnement à l’interface ChatGPT ou Claude ne fournit pas cette clé.
+
+### Migrations longues vers Gmail
+
+Le réglage « Remettre à jour les indicateurs des messages déjà copiés » est automatique par défaut : vers imap.gmail.com il passe --noresyncflags, sans empêcher la copie des nouveaux messages ni la reprise des dossiers. Il est modifiable dans les configurations et le transfert manuel. Les conflits de noms de dossiers restent signalés.
+
+Pendant un transfert OAuth, le jeton d’accès est remplacé avant expiration dans un fichier temporaire privé, relu par imapsync pour se reconnecter. Le renouvellement nécessite un jeton de renouvellement valide, obtenu à la connexion OAuth. Un ancien jeton transmis seul reste utilisable, mais ne peut pas être renouvelé.

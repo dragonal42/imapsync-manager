@@ -7,10 +7,11 @@
 <label>Mot de passe {{ title|lower }}<input name="password{{ side }}" id="password{{ side }}" type="password" autocomplete="new-password"></label>
 <div class="actions"><button type="button" class="oauth" data-provider="google" data-target="oauth2_token{{ side }}" disabled>Connecter Google</button><button type="button" class="oauth" data-provider="microsoft" data-target="oauth2_token{{ side }}" disabled>Connecter Microsoft</button></div>
 <label>Jeton OAuth2 {{ title|lower }}<input type="password" name="oauth2_token{{ side }}" id="oauth2_token{{ side }}" autocomplete="off" disabled></label>
-<input type="hidden" id="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p>
+<input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p>
 
 <label>Sous-dossier {{ title|lower }} (facultatif)<input name="subfolder{{ side }}" maxlength="255"></label></section>{% endfor %}</div>
 <section><h2>Transfert IMAP</h2><p>0 = aucune limite de date. Une valeur positive limite le transfert aux messages récents avec l’option imapsync --maxage. Ce réglage ne change pas les dossiers synchronisés.</p><div class="grid"><label>Période du transfert en jours (0 = sans limite)<input name="transfer_days" type="number" min="0" max="36500" step="1" value="0" required></label>
+{% include "resync_flags.html" %}
 <label class="check"><input type="checkbox" name="dry"> Simulation sans modification</label>
 <label class="check"><input type="checkbox" name="justlogin"> Tester uniquement la connexion</label>
 <label class="check"><input type="checkbox" name="justfoldersizes"> Afficher uniquement la taille des dossiers</label>
