@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -331,10 +332,12 @@ async def login(request: Request):
 
 def send_magic_link(email, token):
     message = EmailMessage()
-    message["From"] = os.environ["SMTP_FROM"]
+    config = load_config()
+    address = parseaddr(os.environ["SMTP_FROM"])[1]
+    message["From"] = formataddr((config.get("magic_link_sender_name", "IMAP Sync - Alain BILLIAR"), address))
     message["To"] = email
     message["Subject"] = "Votre lien de connexion IMAPSync Manager"
-    message.set_content(f"Connectez-vous à IMAPSync Manager :\n{PUBLIC_URL}/auth/verify?token={token}\n\n"
+    message.set_content(f"Bonjour,\n\nConnectez-vous à IMAPSync Manager :\n{PUBLIC_URL}/auth/verify?token={token}\n\n"
                         "Ce lien personnel expire dans 15 minutes et ne peut être utilisé qu'une fois.\n"
                         "Si vous n'avez pas demandé ce lien, ignorez ce message.")
     send_smtp_message(message)
@@ -944,6 +947,19 @@ async def ai_settings_page(request: Request, owner: str = ""):
                   ai=user_ai_settings(config, target['email']))
 
 
+@app.post("/magic-link/settings")
+async def magic_link_settings(request: Request):
+    require_admin(request)
+    form = await request.form()
+    name = str(form.get("sender_name", "")).strip()
+    if not name or len(name) > 100 or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise HTTPException(400, "Nom d’expéditeur invalide (1 à 100 caractères).")
+    config = load_config()
+    config["magic_link_sender_name"] = name
+    save_config(config)
+    return RedirectResponse("/admin", status_code=303)
+
+
 @app.post("/rspamd/settings")
 @app.post("/logs/settings")
 @app.post("/ai/settings")
@@ -1451,7 +1467,7 @@ async def execute(account, actor):
 
     execution_dir = tempfile.TemporaryDirectory(prefix="imapsync-")
     try:
-        cmd = ["imapsync", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
+        cmd = ["imapsync", "--noreleasecheck", "--noid", "--nolog", "--ssl1", "--ssl2", "--tmpdir", execution_dir.name,
                "--pidfile", str(Path(execution_dir.name) / "imapsync.pid")]
         cmd += account.get("options", [])
         if not account_id.startswith("manual-") and not any(flag in cmd for flag in ("--automap", "--noautomap")):
