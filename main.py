@@ -947,7 +947,6 @@ async def ai_settings_page(request: Request, owner: str = ""):
                   ai=user_ai_settings(config, target['email']))
 
 
-@app.post("/rspamd/settings")
 @app.post("/magic-link/settings")
 async def magic_link_settings(request: Request):
     require_admin(request)
@@ -961,6 +960,7 @@ async def magic_link_settings(request: Request):
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.post("/rspamd/settings")
 @app.post("/logs/settings")
 @app.post("/ai/settings")
 @app.post("/settings")
