@@ -480,3 +480,5 @@ select {
 @media(prefers-reduced-motion:reduce){.execution-running{animation:none}}
 .task-management{gap:6px}
 .task-management button,.task-management .button{padding:.35rem .55rem}
+
+#run-log{max-height:65vh;overflow:auto;overflow-anchor:none}

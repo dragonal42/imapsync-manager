@@ -264,7 +264,15 @@ def test_smtp_reuses_backend_settings(env, monkeypatch):
     smtp.login.assert_called_once_with("sender", "smtp-secret")
     message = smtp.send_message.call_args.args[0]
     assert message["To"] == "alice@example.com"
+    assert message["From"] == "IMAP Sync - Alain BILLIAR <sender@example.com>"
+    assert message.get_content().startswith("Bonjour,")
     assert "https://testserver/auth/verify?token=opaque-token" in message.get_content()
+
+    form_data = {"sender_name": "Équipe IMAP"}
+    assert client("alice@example.com").post("/magic-link/settings", data=form_data).status_code == 403
+    assert client("admin@example.com").post("/magic-link/settings", data=form_data).status_code == 303
+    main.send_magic_link("alice@example.com", "opaque-token")
+    assert smtp.send_message.call_args.args[0]["From"] == "Équipe IMAP <sender@example.com>"
 
 
 def test_oauth_success_escapes_tokens_and_consumes_state(env, monkeypatch):
