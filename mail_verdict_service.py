@@ -519,9 +519,14 @@ async def process_mailbox(account, token, settings, key, smtp_from, active, read
                         progress(f'UID {uid.decode()} : message transféré détecté ; analyse de l’original, réponse à la personne qui l’a soumis.')
                     score = None
                     if account.get('use_rspamd'):
-                        result = await call(scan, original, settings)
-                        score = result['score']
-                        progress(f'UID {uid.decode()} : score Rspamd {score}, action {result["action"]}.')
+                        try:
+                            result = await call(scan, original, settings)
+                        except RspamdError as error:
+                            counts['rspamd_warnings'] = counts.get('rspamd_warnings', 0) + 1
+                            progress(f'[AVERTISSEMENT] UID {uid.decode()} : {error} Poursuite avec l’IA seule.')
+                        else:
+                            score = result['score']
+                            progress(f'UID {uid.decode()} : score Rspamd {score}, action {result["action"]}.')
                     engine = account['sMoteurIA']
                     if not key:
                         raise PreprocessingError('Clé IA de l’administrateur absente.')

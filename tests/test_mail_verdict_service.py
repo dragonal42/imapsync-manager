@@ -39,7 +39,7 @@ def setup(monkeypatch, verdict='legitimate', simulation=False):
     state={}; sent=[]
     def save(value): state.clear(); state.update(copy.deepcopy(value))
     def run(send=None, active=None):
-        return asyncio.run(service.process_mailbox(account,'',{'owner':'admin'},'key','robot@example.org',
+        return asyncio.run(service.process_mailbox(account,'',{'owner':'admin', **account.get('_test_settings', {})},'key','robot@example.org',
             active or {'cancelled':False}, lambda:copy.deepcopy(state), save, send or sent.append,lambda _:None))
     return mailbox,account,state,sent,run
 
@@ -360,3 +360,16 @@ def test_forwarded_message_uses_original_sender_but_replies_to_submitter(attache
     assert 'original@example.net' in plain
     assert 'Objet du message vérifié : Facture annuelle' in plain
     assert 'FWD:' not in plain
+
+
+def test_optional_rspamd_refusal_still_runs_ai(monkeypatch):
+    mailbox, account, _, sent, run = setup(monkeypatch, 'scam')
+    account['use_rspamd'] = True
+    account['_test_settings'] = {'rspamd_simulation': False}
+    def reject(*args):
+        raise service.RspamdError('Rspamd : refus temporaire')
+    monkeypatch.setattr(service, 'scan', reject)
+    counts = run()
+    assert counts['rspamd_warnings'] == 1
+    assert counts['analysed'] == counts['sent'] == counts['deleted'] == 1
+    assert counts['errors'] == 0 and sent[0]['Subject'].startswith('[DANGEREUX]')
