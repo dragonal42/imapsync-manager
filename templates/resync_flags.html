@@ -1,0 +1,7 @@
+<label>Remettre à jour les indicateurs des messages déjà copiés
+<select name="resync_flags">
+{% set mode = account.get('resync_flags', 'auto') if account is defined else 'auto' %}
+<option value="auto" {% if mode == 'auto' %}selected{% endif %}>Automatique — désactivé vers Gmail</option>
+<option value="off" {% if mode == 'off' %}selected{% endif %}>Non — copier seulement les nouveaux messages</option>
+<option value="on" {% if mode == 'on' %}selected{% endif %}>Oui — remettre aussi les indicateurs à jour</option>
+</select></label>

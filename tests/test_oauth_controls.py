@@ -12,7 +12,7 @@ from test_tenants import env, client
 @pytest.mark.parametrize('direct', [False, True])
 def test_oauth_arguments_accepted_by_embedded_imapsync_parser(env, monkeypatch, direct):
     account = main.load_config()['accounts'][0]
-    account.update(authmech1='XOAUTH2', authmech2='XOAUTH2', provider1='google', provider2='google', refresh1='refresh-secret', refresh2='refresh-secret')
+    account.update(host2='imap.gmail.com', authmech1='XOAUTH2', authmech2='XOAUTH2', provider1='google', provider2='google', refresh1='refresh-secret', refresh2='refresh-secret')
     if direct:
         account.update(token1='access-secret', token2='access-secret')
     reply = MagicMock()
@@ -21,6 +21,9 @@ def test_oauth_arguments_accepted_by_embedded_imapsync_parser(env, monkeypatch, 
     commands = []
     async def launch(*args, **kwargs):
         commands.append(list(args))
+        for side in ('1', '2'):
+            path = Path(args[args.index('--oauthaccesstoken' + side) + 1])
+            assert path.read_text().strip() == 'access-secret'
         process = MagicMock()
         process.stdout.read = AsyncMock(side_effect=[b'', b''])
         process.wait = AsyncMock()
@@ -31,6 +34,9 @@ def test_oauth_arguments_accepted_by_embedded_imapsync_parser(env, monkeypatch, 
     asyncio.run(main.execute(account, {'pseudo': 'Alice'}))
     args = commands[0][1:]
     assert '--oauthaccesstoken1' in args and '--oauthaccesstoken2' in args
+    assert '--noresyncflags' in args
+    assert 'access-secret' not in args
+    assert not Path(args[args.index('--oauthaccesstoken2') + 1]).exists()
     assert '--oauth2_token1' not in args and '--oauth2_token2' not in args
     assert 'access-secret' not in main.CONFIG_FILE.read_text()
 
@@ -70,3 +76,27 @@ def test_oauth_missing_configuration_returns_popup_feedback(env):
     assert response.status_code == 400
     assert 'oauth-error' in response.text and 'postMessage' in response.text
     assert 'oauth2_token2' in response.text
+
+
+def test_running_transfer_can_replace_oauth_token_file(env, monkeypatch):
+    async def run():
+        path = env / 'oauth-test'
+        main.write_oauth_token(path, 'old')
+        account = {'_oauth_renew2': 0}
+        received = asyncio.Event()
+        async def renew(account, side, private):
+            assert path.read_text().strip() == 'old'
+            account['_oauth_renew2'] = main.time.monotonic() + 3000
+            received.set()
+            return 'new'
+        monkeypatch.setattr(main, 'refresh_access_token', renew)
+        task = asyncio.create_task(main.maintain_imap_token(account, '2', path, [], []))
+        try:
+            await asyncio.wait_for(received.wait(), timeout=2)
+            assert path.read_text().strip() == 'new'
+            assert not path.with_suffix('.new').exists()
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    asyncio.run(run())
