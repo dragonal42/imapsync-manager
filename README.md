@@ -297,3 +297,9 @@ Dans **Mes paramètres IA**, renseigner une clé API Anthropic ou OpenAI et choi
 Choisir ensuite **Claude** ou **OpenAI** dans une configuration ou dans **Analyse IA** sur la page manuelle. Commencer en simulation. Ces deux moteurs reçoivent les mêmes métadonnées que Mistral et Gemini (objet, en-têtes sélectionnés, URLs), sans corps complet ni pièces jointes. Les refus, réponses tronquées et lots dont les identifiants ne correspondent pas n’entraînent aucun déplacement. Les journaux cumulent les tokens retournés par le fournisseur. Un quota OpenAI explicitement épuisé suspend les appels jusqu’au lendemain UTC sans réessayer pendant l’exécution.
 
 Claude utilise [Messages](https://platform.claude.com/docs/en/api/http/messages) ; OpenAI utilise [Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) avec `store: false`. Il faut une clé API du fournisseur ; un abonnement à l’interface ChatGPT ou Claude ne fournit pas cette clé.
+
+### Ordre et exclusions du transfert IMAP
+
+Les dossiers source peuvent être parcourus par nom en ordre croissant, décroissant ou en alternance (par défaut, premier départ en croissant). L’alternance est conservée pour chaque configuration enregistrée et séparément pour les transferts manuels de chaque utilisateur. Les tests de connexion et de taille ne changent pas la direction mémorisée. L’ordre des messages dans un dossier reste inchangé.
+
+Saisir un motif d’exclusion par ligne : `comptable *` ignore les dossiers dont le nom commence par « comptable » suivi d’une espace, y compris leurs sous-dossiers. Les motifs sont insensibles à la casse ASCII et les autres signes sont traités comme du texte. Pour cibler un chemin, utiliser le séparateur IMAP du serveur source (`.` ou `/`). Le périmètre de l’antispam est indépendant.
