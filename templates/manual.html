@@ -1,16 +1,19 @@
 {% extends 'base.html' %}{% block content %}<h1>Synchronisation manuelle</h1><p>Copiez ou synchronisez ponctuellement une boîte mail. Les identifiants saisis ne sont pas enregistrés comme configuration ; l’historique appartient à votre espace.</p>
 <form id="manual-form" action="/cgi-bin/imapsync" method="post" autocomplete="off">
-<div class="grid">{% for side, title in [('1','Source'),('2','Destination')] %}<section><h2>{{ title }}</h2>
-<label>Serveur IMAP {{ title|lower }}<input name="host{{ side }}" id="host{{ side }}" required maxlength="255"></label>
-<label>Identifiant {{ title|lower }}<input name="user{{ side }}" id="user{{ side }}" required maxlength="255"></label>
-<label>Authentification<select name="authmech{{ side }}" id="authmech{{ side }}" data-auth-side="{{ side }}"><option value="PLAIN">Mot de passe IMAP</option><option value="XOAUTH2">Connexion OAuth2</option></select></label>
+{% if saved_source.id %}<input type="hidden" name="saved_source" value="{{ saved_source.id }}">
+<p class="notice">Source enregistrée : <strong>{{ saved_source.label }}</strong>. Les identifiants sont utilisés côté serveur. <a href="/manual">Saisir une autre source</a></p>{% endif %}
+<div class="grid">{% for side, title in [('1','Source'),('2','Destination')] %}<section id="manual-side-{{ side }}"><h2>{{ title }}</h2>{% set bound = side == "1" and saved_source.id %}
+<label>Serveur IMAP {{ title|lower }}<input name="host{{ side }}" id="host{{ side }}" required maxlength="255" {% if bound %}value="{{ saved_source.host1 }}" readonly{% endif %}></label>
+<label>Identifiant {{ title|lower }}<input name="user{{ side }}" id="user{{ side }}" required maxlength="255" {% if bound %}value="{{ saved_source.user1 }}" readonly{% endif %}></label>
+{% if bound %}<p>Authentification : {{ 'OAuth2' if saved_source.authmech1 == 'XOAUTH2' else 'Mot de passe IMAP' }}</p>
+{% else %}<label>Authentification<select name="authmech{{ side }}" id="authmech{{ side }}" data-auth-side="{{ side }}"><option value="PLAIN">Mot de passe IMAP</option><option value="XOAUTH2">Connexion OAuth2</option></select></label>
 <label>Mot de passe {{ title|lower }}<input name="password{{ side }}" id="password{{ side }}" type="password" autocomplete="new-password"></label>
 <div class="actions"><button type="button" class="oauth" data-provider="google" data-target="oauth2_token{{ side }}" disabled>Connecter Google</button><button type="button" class="oauth" data-provider="microsoft" data-target="oauth2_token{{ side }}" disabled>Connecter Microsoft</button></div>
 <label>Jeton OAuth2 {{ title|lower }}<input type="password" name="oauth2_token{{ side }}" id="oauth2_token{{ side }}" autocomplete="off" disabled></label>
-<input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p>
+<input type="hidden" id="refresh_oauth2_token{{ side }}" name="refresh_oauth2_token{{ side }}"><input type="hidden" id="provider_oauth2_token{{ side }}" name="provider_oauth2_token{{ side }}"><p id="status_oauth2_token{{ side }}" class="oauth-status" role="status" aria-live="polite"></p>{% endif %}
 
 <label>Sous-dossier {{ title|lower }} (facultatif)<input name="subfolder{{ side }}" maxlength="255"></label></section>{% endfor %}</div>
-<section><h2>Transfert IMAP</h2><p>0 = aucune limite de date. Une valeur positive limite le transfert aux messages récents avec l’option imapsync --maxage. Ce réglage ne change pas les dossiers synchronisés.</p><div class="grid"><label>Période du transfert en jours (0 = sans limite)<input name="transfer_days" type="number" min="0" max="36500" step="1" value="0" required></label>
+<section id="manual-transfer"><h2>Transfert IMAP</h2><p>0 = aucune limite de date. Une valeur positive limite le transfert aux messages récents avec l’option imapsync --maxage. Ce réglage ne change pas les dossiers synchronisés.</p><div class="grid"><label>Période du transfert en jours (0 = sans limite)<input name="transfer_days" type="number" min="0" max="36500" step="1" value="0" required></label>
 {% include "resync_flags.html" %}
 <label class="check"><input type="checkbox" name="dry"> Simulation sans modification</label>
 <label class="check"><input type="checkbox" name="justlogin"> Tester uniquement la connexion</label>
@@ -22,7 +25,7 @@
 <section id="manual-ai"><h2>Analyse antispam locale / IA</h2><p>Utilise uniquement les identifiants Source ci-dessus, sans transfert vers la destination. Le suivi détaillé est activé pour ce lancement, même si le Debug global est désactivé.</p><div class="grid">
 <label>Moteur d’analyse<select name="sMoteurIA"><option>Mistral</option><option>Gemini</option><option>Claude</option><option>OpenAI</option><option value="Rspamd">Rspamd local — sans API IA</option></select></label>
 <label class="check"><input type="checkbox" name="rspamd_precheck"> Prétri Rspamd avant le moteur IA choisi</label><label>Type d’analyse<select name="ai_mode"><option value="preview">Simulation — analyser sans déplacer</option><option value="move">Tri — déplacer les spams et arnaques</option></select></label>
-<label>Dossier source à analyser (nom IMAP)<input name="source_folder" value="INBOX" maxlength="255"></label>
+<label>Dossier source à analyser (nom IMAP)<input name="source_folder" value="{{ saved_source.source_folder or 'INBOX' }}" maxlength="255"></label>
 <label>Période de l’analyse en jours (0 = sans limite)<input name="nPeriodeJours" type="number" min="0" max="36500" step="1" value="5"></label>
 <label class="check"><input name="ai_recursive" type="checkbox"> Inclure les sous-dossiers autorisés</label>
 <label class="check"><input name="ai_recheck" type="checkbox"> Réanalyser les messages déjà traités</label>
@@ -38,5 +41,5 @@
 </div></section>
 <section id="manual-senders"><h2>Extraction des destinataires</h2><p>Utilise les identifiants Source ci-dessus pour préparer une liste à importer en liste blanche, sans transfert ni analyse antispam.</p><div class="grid"><label class="check"><input type="checkbox" name="sent_auto" checked> Détecter automatiquement le dossier Envoyés</label><label>Dossier Envoyés (si détection désactivée)<input name="sent_folder" value="Sent" maxlength="255"></label><label>Nombre de messages envoyés à examiner<input name="sent_limit" type="number" value="500" min="1" max="10000" step="1"></label><label class="check"><input type="checkbox" name="exclude_whitelist" checked> Exclure les destinataires déjà dans ma liste blanche</label></div><div class="actions"><button id="bt-senders" type="button">Extraire les destinataires To</button></div><p class="muted">La détection privilégie le dossier déclaré Envoyés par le serveur, puis INBOX.Sent ou Sent. Désactivez-la pour imposer le dossier indiqué (ex. Sent, INBOX.Sent ou [Gmail]/Sent Mail), messages les plus récents en premier selon leur UID. Lecture seule des destinataires To, sans Cc/Bcc. La limite porte sur les messages examinés ; les adresses sont dédupliquées. Aucun ajout automatique à la liste blanche. Importez ensuite par groupes de 1000 adresses maximum.</p></section>
 </form>
-<section><h2>Suivi d’exécution</h2><p id="manual-status" role="status">Aucune exécution en cours.</p><button type="button" id="bt-copy-senders" hidden>Copier les adresses</button><pre id="output" aria-live="off"></pre><a id="manual-log" hidden>Ouvrir le journal</a></section>
-<script defer src="/static/auth.js"></script><script defer src="/static/manual.js?v=folder-inventory"></script>{% endblock %}
+<section id="manual-progress"><h2>Suivi d’exécution</h2><p id="manual-status" role="status">Aucune exécution en cours.</p><button type="button" id="bt-copy-senders" hidden>Copier les adresses</button><pre id="output" aria-live="off"></pre><a id="manual-log" hidden>Ouvrir le journal</a></section>
+<script defer src="/static/auth.js"></script><script defer src="/static/manual.js?v=saved-source"></script>{% endblock %}

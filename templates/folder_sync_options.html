@@ -2,5 +2,17 @@
 {% for value, label in [('alternate', 'Alternance croissant / décroissant'), ('ascending', 'Ordre croissant (A → Z)'), ('descending', 'Ordre décroissant (Z → A)')] %}
 <option value="{{ value }}" {% if account.get('folder_order', 'alternate') == value %}selected{% endif %}>{{ label }}</option>
 {% endfor %}</select></label>
-<label>Dossiers à exclure du transfert<textarea name="folder_exclusions" rows="4" maxlength="8000" placeholder="comptable *">{{ account.get('folder_exclusions', []) | join('\n') }}</textarea></label>
-<p class="muted">Un motif par ligne, sans distinction de casse. <code>*</code> remplace zéro ou plusieurs caractères. <code>comptable *</code> exclut par exemple « comptable 2025 », « comptable 2026 » et leurs sous-dossiers. <code>=INBOX.comptable 2026</code> cible uniquement ce chemin exact côté source, avant le renommage à destination. Un motif court comme <code>ALLIANZ</code> correspond aussi à <code>INBOX.ALLIANZ</code>. Pour préparer cette liste, utilisez <a href="/manual#manual-folders">Extraction des dossiers</a>. Le prétraitement antispam garde son propre périmètre.</p>
+<div class="folder-exclusion-editor">
+<label for="folder-exclusions">Dossiers à exclure du transfert</label>
+<textarea id="folder-exclusions" name="folder_exclusions" rows="9" maxlength="8000" spellcheck="false"
+          aria-describedby="folder-exclusion-help" placeholder="comptable *&#10;=INBOX.ALLIANZ">{{ account.get('folder_exclusions', []) | join('\n') }}</textarea>
+<div id="folder-exclusion-help">
+<p>Une règle par ligne. Laissez la zone vide pour ne pas ajouter d’exclusion.</p>
+<ul>
+<li><code>comptable *</code> ignore « comptable 2025 », « comptable 2026 » et leurs sous-dossiers. Le joker <code>*</code> représente zéro ou plusieurs caractères.</li>
+<li><code>=INBOX.ALLIANZ</code> ignore uniquement ce chemin exact côté source, même si le dossier s’appelle <code>ALLIANZ</code> à destination.</li>
+</ul>
+<p class="muted">Ces règles concernent le transfert ; l’analyse antispam conserve ses propres réglages.</p>
+</div>
+<a class="button secondary" href="/manual{% if account.id %}?source={{ account.id|urlencode }}{% endif %}#manual-folders">Lister les dossiers dans le mode manuel</a>
+</div>

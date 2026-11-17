@@ -1212,14 +1212,41 @@ async def run_logs(request: Request, run_id: str):
     return render(request, "logs.html", run=run)
 
 
+def manual_saved_source(request, source):
+    config = load_config()
+    saved = account_for(request, config, source)
+    if not any(user["email"] == saved["owner"] and user.get("enabled", True) for user in config["users"]):
+        raise HTTPException(403, "Le propriétaire de cette source est désactivé.")
+    return saved
+
+
 @app.get("/manual")
-async def manual(request: Request):
-    return render(request, "manual.html")
+async def manual(request: Request, source: str = ""):
+    saved = manual_saved_source(request, source) if source else {}
+    display = {key: saved.get(key, "") for key in ("id", "label", "host1", "user1", "authmech1", "source_folder")}
+    return render(request, "manual.html", saved_source=display)
+
+
+async def manual_source_token(account):
+    if account.get("authmech1") == "XOAUTH2" and account.get("refresh1"):
+        try:
+            account["token1"] = await refresh_access_token(account, "1", [])
+        except (requests.RequestException, KeyError, ValueError, TypeError):
+            raise HTTPException(502, "Renouvellement OAuth de la source impossible. Reconnectez-la dans sa configuration.") from None
 
 
 @app.post("/manual/folders")
 async def manual_folders(request: Request):
     form = await request.form()
+    source = str(form.get("saved_source", ""))
+    if source:
+        saved = dict(manual_saved_source(request, source))
+        await manual_source_token(saved)
+        try:
+            folders = await asyncio.to_thread(extract_folders, saved)
+        except PreprocessingError as error:
+            raise HTTPException(502, str(error)) from None
+        return JSONResponse({"folders": folders}, headers={"Cache-Control": "no-store"})
     account = {}
     for key in ("host1", "user1"):
         value = str(form.get(key, "")).strip()
@@ -1262,12 +1289,25 @@ async def manual_sync(request: Request):
     sender_export = form.get("action") == "senders"
     ai_only = form.get("action") == "ai" or sender_export
     account = {"id": "manual-" + secrets.token_hex(12), "owner": request.state.user["email"], "label": "Synchronisation manuelle"}
+    source = str(form.get("saved_source", ""))
+    saved = manual_saved_source(request, source) if source else None
+    if saved:
+        account["_source_account_id"] = str(saved["id"])
+        for key in ("host1", "user1", "authmech1", "pass1", "refresh1", "provider1"):
+            if key in saved:
+                account[key] = saved[key]
+        if ai_only:
+            await manual_source_token(account)
     for key in (("host1", "user1") if ai_only else ("host1", "host2", "user1", "user2")):
+        if saved and key.endswith("1"):
+            continue
         value = str(form.get(key, "")).strip()
         if not value or len(value) > 255 or value.startswith("-") or any(ord(c) < 32 for c in value):
             raise HTTPException(400, "Champ invalide : " + key)
         account[key] = value
     for side in (("1",) if ai_only else ("1", "2")):
+        if saved and side == "1":
+            continue
         mech = str(form.get("authmech" + side, "PLAIN"))
         if mech not in {"PLAIN", "XOAUTH2"}:
             raise HTTPException(400, "Authentification IMAP invalide")
@@ -1483,7 +1523,7 @@ async def refresh_access_token(account, side, private_values):
         private_values.append(tokens["refresh_token"])
         fresh = load_config()
         for current in fresh["accounts"]:
-            if (str(current["id"]) == str(account["id"])
+            if (str(current["id"]) == str(account.get("_source_account_id", account["id"]) if side == "1" else account["id"])
                     and current.get("refresh" + side) == previous_refresh):
                 current["refresh" + side] = tokens["refresh_token"]
                 save_config(fresh)

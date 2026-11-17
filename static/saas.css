@@ -482,3 +482,8 @@ select {
 .task-management button,.task-management .button{padding:.35rem .55rem}
 
 #run-log{max-height:65vh;overflow:auto;overflow-anchor:none}
+
+.folder-exclusion-editor{background:#f1f6fb;border:1px solid #c7d9eb;border-radius:12px;padding:1rem}
+.folder-exclusion-editor textarea{display:block;width:100%;min-height:15rem;resize:vertical;margin:.5rem 0;padding:.85rem;border:1px solid #829bb6;border-radius:8px;background:#fff;color:#182e43;font:1rem/1.55 ui-monospace,monospace}
+.folder-exclusion-editor textarea:focus{outline:2px solid #165bb5;outline-offset:2px}
+.folder-exclusion-editor ul{padding-inline-start:1.35rem}

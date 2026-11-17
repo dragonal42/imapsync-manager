@@ -38,6 +38,7 @@
 <td><span data-account-status="{{ acc.id }}">{{ "OK" if acc.status == "Succès" else acc.status }}</span><br><small>{{ acc.last_run|datetime_seconds }}</small></td><td><div class="actions task-management">
 <a class="button secondary" title="Afficher l’historique de cette configuration" href="/dashboard?history=1&amp;account_id={{ acc.id|urlencode }}#historique">Logs</a>
 <a class="button orange" title="Modifier les paramètres de cette configuration" href="/account/edit/{{ acc.id }}">Modifier</a>
+<a class="button secondary" title="Ouvrir le mode manuel avec cette source enregistrée" href="/manual?source={{ acc.id|urlencode }}">Envoyer dans /manual</a>
 <form class="action-form" method="post" action="/account/logs/clear/{{ acc.id }}" data-confirm="Vider tous les journaux accessibles de cette configuration ?" data-toast="Journaux vidés"><button class="secondary" title="Effacer tous les journaux de cette configuration">Vider les logs</button></form>
 <form class="action-form" method="post" action="/account/delete/{{ acc.id }}" data-confirm="Supprimer cette configuration ? Cette action est définitive." data-toast="Configuration supprimée"><button class="danger" title="Supprimer définitivement">Supprimer</button></form>
 </div></td></tr>{% else %}<tr><td colspan="6">Aucune configuration.</td></tr>{% endfor %}</tbody></table></div></section>
