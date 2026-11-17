@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from base64 import b64encode
 import secrets
 import shutil
 import smtplib
@@ -23,13 +24,13 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from ai_preprocessing import preprocess, PreprocessingError, TECHNICAL_FOLDER_EXCLUDE, AI_ENGINES, provider_model
 from run_logging import RunMetrics
-from sender_export import extract_senders
+from sender_export import extract_senders, extract_folders
 from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error, inspect_verdict_mailbox
 from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
 from sender_rules import KINDS, parse_import, EMAIL
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -1101,6 +1102,9 @@ async def save_account(request: Request, account_id: str = ""):
     # Gérer les options de suppression
     if "resync_flags" in form:
         account["resync_flags"] = flag_sync_setting(form)
+
+    if "folder_order" in form or "folder_exclusions" in form:
+        account.update(folder_settings(form))
     account["delete1"] = str(form.get("delete1", "off"))
     account["delete2"] = "off"  # Désactivé par défaut pour la destination
     for side in (("1", "2") if sync else ("1",)):
@@ -1213,6 +1217,31 @@ async def manual(request: Request):
     return render(request, "manual.html")
 
 
+@app.post("/manual/folders")
+async def manual_folders(request: Request):
+    form = await request.form()
+    account = {}
+    for key in ("host1", "user1"):
+        value = str(form.get(key, "")).strip()
+        if not value or len(value) > 255 or any(ord(c) < 32 for c in value):
+            raise HTTPException(400, "Renseignez le serveur et l’identifiant de la source.")
+        account[key] = value
+    mech = str(form.get("authmech1", "PLAIN"))
+    if mech not in {"PLAIN", "XOAUTH2"}:
+        raise HTTPException(400, "Authentification IMAP invalide.")
+    account["authmech1"] = mech
+    field = "oauth2_token1" if mech == "XOAUTH2" else "password1"
+    credential = str(form.get(field, ""))
+    if not credential or len(credential) > 8192 or any(ord(c) < 32 for c in credential):
+        raise HTTPException(400, "Renseignez le mot de passe source ou connectez le compte OAuth2.")
+    account["token1" if mech == "XOAUTH2" else "pass1"] = credential
+    try:
+        folders = await asyncio.to_thread(extract_folders, account)
+    except PreprocessingError as error:
+        raise HTTPException(502, str(error)) from None
+    return JSONResponse({"folders": folders}, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/cgi-bin/imapsync")
 async def manual_sync(request: Request):
     form = await request.form()
@@ -1287,6 +1316,8 @@ async def manual_sync(request: Request):
                        ai_recursive=form.get("ai_recursive") == "on", ai_recheck=form.get("ai_recheck") == "on")
     else:
         account["resync_flags"] = flag_sync_setting(form)
+
+        account.update(folder_settings(form))
         account["options"] = ["--" + f for f in ("delete1", "delete2", "dry", "justlogin", "justfolders", "justfoldersizes") if form.get(f) == "on"]
         try:
             transfer_days = int(form.get("transfer_days", "0"))
@@ -1487,6 +1518,40 @@ def flag_sync_setting(form):
         raise HTTPException(400, "Réglage des indicateurs IMAP invalide.")
     return mode
 
+def folder_settings(form):
+    order = form.get("folder_order", "alternate")
+    if order not in {"ascending", "descending", "alternate"}:
+        raise HTTPException(400, "Ordre des dossiers invalide.")
+    raw = str(form.get("folder_exclusions", ""))
+    patterns = list(dict.fromkeys(line.strip() for line in raw.splitlines() if line.strip()))
+    if len(raw) > 8000 or len(patterns) > 40 or any(
+            len(pattern) > 200 or (not pattern.startswith("=") and pattern.count("*") > 5) or pattern == "=" or any(ord(c) < 32 or ord(c) == 127 for c in pattern) for pattern in patterns):
+        raise HTTPException(400, "Indiquez au plus 40 exclusions de 200 caractères et 5 astérisques par ligne.")
+    return {"folder_order": order, "folder_exclusions": patterns}
+
+
+def folder_exclusion_regex(pattern):
+    def encode(match):
+        data = b64encode(match[0].encode("utf-16-be")).decode().rstrip("=").replace("/", ",")
+        return "&" + data + "-"
+    exact = pattern.startswith("=")
+    if exact:
+        pattern = pattern[1:]
+    wire_pattern = re.sub(r"[^ -~]+", encode, pattern.replace("&", "&-"))
+    if exact:
+        return r"\A" + re.escape(wire_pattern) + r"\Z"
+    glob = ".*".join(re.escape(part) for part in re.split(r"\*+", wire_pattern))
+    return r"(?i)(?:^|[./])" + glob + r"(?:[./].*)?$"
+
+
+def transfer_folder_options(account, container):
+    mode = account.get("folder_order", "alternate")
+    descending = mode == "descending" or (mode == "alternate" and container.get("last_folder_order") == "ascending")
+    options = ["--folderreverse"] if descending else []
+    for pattern in account.get("folder_exclusions", []):
+        options += ["--exclude", folder_exclusion_regex(pattern)]
+    return options, "descending" if descending else "ascending"
+
 
 async def execute(account, actor):
     account_id = str(account["id"])
@@ -1615,6 +1680,20 @@ async def execute(account, actor):
             status = "Succès"
         else:
             cmd += ["--exclude", TECHNICAL_FOLDER_EXCLUDE]
+            fresh = load_config()
+            manual = account_id.startswith("manual-")
+            candidates = fresh["users"] if manual else fresh["accounts"]
+            target = next((item for item in candidates if
+                           (item["email"] == account["owner"] if manual else str(item["id"]) == account_id)), None)
+            order_state = (target.get("manual_folder_state", {}) if manual else target) if target is not None else {}
+            folder_options, direction = transfer_folder_options(account, order_state)
+            cmd += folder_options
+            if (target is not None and account.get("folder_order", "alternate") == "alternate"
+                    and not any(flag in cmd for flag in ("--justlogin", "--justfoldersizes"))):
+                if manual:
+                    order_state = target.setdefault("manual_folder_state", {})
+                order_state["last_folder_order"] = direction
+                save_config(fresh)
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             active["process"] = process
             token_tasks = [asyncio.create_task(maintain_imap_token(account, side, path, private_values, warnings))

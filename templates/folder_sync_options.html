@@ -1,0 +1,6 @@
+<label>Ordre de synchronisation des dossiers<select name="folder_order">
+{% for value, label in [('alternate', 'Alternance croissant / décroissant'), ('ascending', 'Ordre croissant (A → Z)'), ('descending', 'Ordre décroissant (Z → A)')] %}
+<option value="{{ value }}" {% if account.get('folder_order', 'alternate') == value %}selected{% endif %}>{{ label }}</option>
+{% endfor %}</select></label>
+<label>Dossiers à exclure du transfert<textarea name="folder_exclusions" rows="4" maxlength="8000" placeholder="comptable *">{{ account.get('folder_exclusions', []) | join('\n') }}</textarea></label>
+<p class="muted">Un motif par ligne, sans distinction de casse. <code>*</code> remplace zéro ou plusieurs caractères. <code>comptable *</code> exclut par exemple « comptable 2025 », « comptable 2026 » et leurs sous-dossiers. <code>=INBOX.comptable 2026</code> cible uniquement ce chemin exact côté source, avant le renommage à destination. Un motif court comme <code>ALLIANZ</code> correspond aussi à <code>INBOX.ALLIANZ</code>. Pour préparer cette liste, utilisez <a href="/manual#manual-folders">Extraction des dossiers</a>. Le prétraitement antispam garde son propre périmètre.</p>

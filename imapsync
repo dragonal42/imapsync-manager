@@ -310,6 +310,7 @@ Same thing for the user2 password.
  --folderrec    str  : Sync this folder and all its sub-folders.
  --folderrec    str  : and this one, etc.
 
+ --folderreverse     : Process folders in reverse lexical order.
  --folderfirst  str  : Sync this folder first. Ex. --folderfirst "INBOX"
  --folderfirst  str  : then this one, etc.
  --folderlast   str  : Sync this folder last. --folderlast "[Gmail]/All Mail"
@@ -10881,6 +10882,7 @@ sub sort_requested_folders
         my @folderlast_requested  = remove_from_requested_folders( @folderlast ) ;
 
         my @middle = sort keys %requested_folder ;
+        @middle = reverse @middle if $sync->{ folderreverse } ;
 
         @requested_folders_sorted = ( @folderfirst_requested, @middle, @folderlast_requested ) ;
         $sync->{ debug } and myprint "requested_folders_sorted: @requested_folders_sorted\n" ;
@@ -23149,6 +23151,7 @@ sub get_options_cmd
         'include=s'         => \@include,
         'exclude=s'         => \@exclude,
         'noexclude'         => \$mysync->{ noexclude },
+        'folderreverse!'    => \$mysync->{ folderreverse },
         'folderfirst=s'     => \@folderfirst,
         'folderlast=s'      => \@folderlast,
         'prefix1=s'         => \$mysync->{ prefix1 },

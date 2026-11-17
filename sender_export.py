@@ -1,5 +1,6 @@
 """Read-only recipient inventory from the newest messages in the Sent folder."""
 import asyncio
+from base64 import b64decode
 import imaplib
 import re
 import ssl
@@ -136,5 +137,58 @@ async def extract_senders(account, whitelist, active, progress):
         if client:
             try:
                 await call(client.logout)
+            except (imaplib.IMAP4.error, OSError):
+                pass
+
+
+def listed_folder_names(entries):
+    folders = set()
+    for entry in entries:
+        if not entry:
+            continue
+        raw = entry[0] if isinstance(entry, tuple) else entry
+        match = re.fullmatch(rb'\(([^)]*)\) (NIL|"(?:[^"\\]|\\.)*") (.+)', raw)
+        if not match:
+            raise PreprocessingError('Réponse LIST illisible.')
+        if {b'\\NOSELECT', b'\\NONEXISTENT'} & set(match[1].upper().split()):
+            continue
+        name = entry[1] if isinstance(entry, tuple) else match[3]
+        if not isinstance(entry, tuple) and name.startswith(b'"') and name.endswith(b'"'):
+            name = re.sub(rb'\\(.)', rb'\1', name[1:-1])
+        def decode(group):
+            encoded = group[1]
+            if not encoded:
+                return '&'
+            return b64decode(encoded.replace(',', '/') + '=' * (-len(encoded) % 4), validate=True).decode('utf-16-be')
+        display = re.sub(r'&([A-Za-z0-9+,]*)-', decode, name.decode('ascii'))
+        if display and display == display.strip() and not any(ord(c) < 32 or ord(c) == 127 or c in '\u0085\u2028\u2029' for c in display):
+            folders.add(display)
+    return sorted(folders, key=lambda name: (name.casefold(), name))
+
+
+def extract_folders(account):
+    client = None
+    stage = 'connexion TLS'
+    try:
+        client = imaplib.IMAP4_SSL(account['host1'], port=993, ssl_context=ssl.create_default_context(), timeout=30)
+        stage = 'authentification'
+        if account['authmech1'] == 'XOAUTH2':
+            auth = ('user=' + account['user1'] + '\x01auth=Bearer ' + account['token1'] + '\x01\x01').encode()
+            status, _ = client.authenticate('XOAUTH2', lambda _: auth)
+        else:
+            status, _ = client.login(account['user1'], account['pass1'])
+        if status != 'OK':
+            raise PreprocessingError('Authentification IMAP source refusée.')
+        stage = 'liste des dossiers'
+        status, data = client.list()
+        if status != 'OK':
+            raise PreprocessingError('Le serveur IMAP a refusé la commande LIST.')
+        return listed_folder_names(data)
+    except (imaplib.IMAP4.error, OSError, ValueError, TypeError) as error:
+        raise PreprocessingError(f'Extraction impossible : {stage}. Vérifiez la connexion source.') from None
+    finally:
+        if client:
+            try:
+                client.logout()
             except (imaplib.IMAP4.error, OSError):
                 pass

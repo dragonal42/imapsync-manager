@@ -303,3 +303,11 @@ Claude utilise [Messages](https://platform.claude.com/docs/en/api/http/messages)
 Le réglage « Remettre à jour les indicateurs des messages déjà copiés » est automatique par défaut : vers imap.gmail.com il passe --noresyncflags, sans empêcher la copie des nouveaux messages ni la reprise des dossiers. Il est modifiable dans les configurations et le transfert manuel. Les conflits de noms de dossiers restent signalés.
 
 Pendant un transfert OAuth, le jeton d’accès est remplacé avant expiration dans un fichier temporaire privé, relu par imapsync pour se reconnecter. Le renouvellement nécessite un jeton de renouvellement valide, obtenu à la connexion OAuth. Un ancien jeton transmis seul reste utilisable, mais ne peut pas être renouvelé.
+
+### Ordre et exclusions du transfert IMAP
+
+Les dossiers source peuvent être parcourus par nom en ordre croissant, décroissant ou en alternance (par défaut, premier départ en croissant). L’alternance est conservée pour chaque configuration enregistrée et séparément pour les transferts manuels de chaque utilisateur. Les tests de connexion et de taille ne changent pas la direction mémorisée. L’ordre des messages dans un dossier reste inchangé.
+
+Saisir un motif d’exclusion par ligne : `comptable *` ignore les dossiers dont le nom commence par « comptable » suivi d’une espace, y compris leurs sous-dossiers. Les motifs sont insensibles à la casse ASCII et les autres signes sont traités comme du texte. Pour cibler un chemin, utiliser le séparateur IMAP du serveur source (`.` ou `/`). Le périmètre de l’antispam est indépendant.
+
+Dans /manual, **Extraction des dossiers** liste les dossiers sélectionnables via IMAP LIST sans lire les messages. Cochez les dossiers puis ajoutez-les aux exclusions manuelles ou copiez les motifs dans une configuration. Un motif généré comme `=INBOX.ALLIANZ` cible ce chemin source exact, même si le dossier devient `ALLIANZ` sur Gmail. Le préfixe `=` désactive le joker pour ce motif et ne couvre pas les sous-dossiers.
