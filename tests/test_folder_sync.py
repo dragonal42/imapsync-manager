@@ -67,3 +67,22 @@ def test_folder_extraction_only_lists_folders(monkeypatch):
     assert export.extract_folders(dict(host1='source', user1='user', pass1='secret', authmech1='PLAIN')) == ['INBOX.ALLIANZ']
     assert [x[0] for x in mailbox.method_calls] == ['login', 'list', 'logout']
     assert re.search(folder_exclusion_regex('ALLIANZ'), 'INBOX.ALLIANZ')
+
+
+def test_manual_saved_source_is_bound_to_visible_configuration(env, monkeypatch):
+    import main
+    from test_tenants import client
+
+    calls = []
+    monkeypatch.setattr(main, 'extract_folders', lambda account: calls.append(account) or ['INBOX'])
+    alice = client('alice@example.com')
+    rendered = alice.get('/manual?source=a')
+    assert rendered.status_code == 200
+    assert 'name="saved_source" value="a"' in rendered.text
+    assert 'value="imap.example.com" readonly' in rendered.text
+    assert 'name="password1"' not in rendered.text
+    assert alice.get('/manual?source=b').status_code == 404
+    assert alice.post('/manual/folders', data={'saved_source': 'b'}).status_code == 404
+    reply = alice.post('/manual/folders', data={'saved_source': 'a', 'host1': 'override.example.org'})
+    assert reply.json() == {'folders': ['INBOX']}
+    assert len(calls) == 1 and calls[0]['host1'] == 'imap.example.com'

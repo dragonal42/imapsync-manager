@@ -94,9 +94,14 @@ const folderStatus = document.getElementById('folder-list-status');
 const folderActions = document.getElementById('folder-list-actions');
 folderButton.addEventListener('click', async () => {
     const body = new FormData();
-    const credential = manualForm.elements.authmech1.value === 'XOAUTH2' ? 'oauth2_token1' : 'password1';
-    for (const name of ['host1', 'user1', 'authmech1', credential]) {
-        body.set(name, manualForm.elements[name].value);
+    const saved = manualForm.elements.saved_source;
+    if (saved) {
+        body.set('saved_source', saved.value);
+    } else {
+        const credential = manualForm.elements.authmech1.value === 'XOAUTH2' ? 'oauth2_token1' : 'password1';
+        for (const name of ['host1', 'user1', 'authmech1', credential]) {
+            body.set(name, manualForm.elements[name].value);
+        }
     }
     folderButton.disabled = true;
     folderList.replaceChildren();
