@@ -87,3 +87,68 @@ stopButton.addEventListener('click', async () => {
     } catch (error) { stopButton.disabled = false; await Swal.fire({title: 'Arrêt impossible', text: error.message, icon: 'error'}); }
 });
 if (runId) { runButton.disabled = aiButton.disabled = sendersButton.disabled = true; pollManual(); }
+
+const folderButton = document.getElementById('bt-folders');
+const folderList = document.getElementById('folder-list');
+const folderStatus = document.getElementById('folder-list-status');
+const folderActions = document.getElementById('folder-list-actions');
+folderButton.addEventListener('click', async () => {
+    const body = new FormData();
+    const credential = manualForm.elements.authmech1.value === 'XOAUTH2' ? 'oauth2_token1' : 'password1';
+    for (const name of ['host1', 'user1', 'authmech1', credential]) {
+        body.set(name, manualForm.elements[name].value);
+    }
+    folderButton.disabled = true;
+    folderList.replaceChildren();
+    folderActions.hidden = true;
+    folderStatus.textContent = 'Lecture des dossiers source…';
+    try {
+        const {folders} = await (await apiPost('/manual/folders', body)).json();
+        for (const folder of folders) {
+            const label = document.createElement('label');
+            label.className = 'check';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = '=' + folder;
+            input.disabled = [...input.value].length > 200;
+            if (input.disabled) label.title = 'Ce chemin dépasse la longueur autorisée pour une exclusion.';
+            label.append(input, document.createTextNode(folder));
+            folderList.append(label);
+        }
+        folderStatus.textContent = folders.length ? folders.length + ' dossier(s) sélectionnable(s).' : 'Aucun dossier sélectionnable.';
+        folderActions.hidden = !folders.length;
+    } catch (error) {
+        folderStatus.textContent = error.message;
+    } finally {
+        folderButton.disabled = false;
+    }
+});
+function selectedFolderExclusions() {
+    const rules = [...folderList.querySelectorAll('input:checked')].map(input => input.value);
+    if (!rules.length) showToast('Sélectionnez au moins un dossier.', 'info');
+    return rules;
+}
+document.getElementById('bt-copy-folders').addEventListener('click', async () => {
+    const rules = selectedFolderExclusions();
+    if (!rules.length) return;
+    try {
+        await navigator.clipboard.writeText(rules.join('\n'));
+        showToast('Exclusions copiées');
+    } catch (_) {
+        await Swal.fire({title: 'Exclusions à copier', input: 'textarea', inputValue: rules.join('\n'),
+                         inputAttributes: {readonly: 'readonly'}, confirmButtonText: 'Fermer'});
+    }
+});
+document.getElementById('bt-add-folders').addEventListener('click', () => {
+    const rules = selectedFolderExclusions();
+    if (!rules.length) return;
+    const field = manualForm.elements.folder_exclusions;
+    const combined = [...new Set([...field.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean), ...rules])];
+    if (combined.length > 40 || combined.join('\n').length > 8000) {
+        showToast('La liste accepte au plus 40 motifs et 8 000 caractères.', 'error');
+        return;
+    }
+    field.value = combined.join('\n');
+    field.focus();
+    showToast('Exclusions ajoutées au transfert manuel');
+});

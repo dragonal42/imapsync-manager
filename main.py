@@ -24,13 +24,13 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from ai_preprocessing import preprocess, PreprocessingError, TECHNICAL_FOLDER_EXCLUDE, AI_ENGINES, provider_model
 from run_logging import RunMetrics
-from sender_export import extract_senders
+from sender_export import extract_senders, extract_folders
 from mail_verdict_service import SERVICE_ID, process_mailbox, smtp_settings, send_verdict_smtp, test_imap_connection, transport_error, inspect_verdict_mailbox
 from rspamd_client import DEFAULTS as RSPAMD_DEFAULTS, settings_from_form as rspamd_settings
 from audit_logging import audit, client_ip, normalized_ip
 from sender_rules import KINDS, parse_import, EMAIL
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -1217,6 +1217,31 @@ async def manual(request: Request):
     return render(request, "manual.html")
 
 
+@app.post("/manual/folders")
+async def manual_folders(request: Request):
+    form = await request.form()
+    account = {}
+    for key in ("host1", "user1"):
+        value = str(form.get(key, "")).strip()
+        if not value or len(value) > 255 or any(ord(c) < 32 for c in value):
+            raise HTTPException(400, "Renseignez le serveur et l’identifiant de la source.")
+        account[key] = value
+    mech = str(form.get("authmech1", "PLAIN"))
+    if mech not in {"PLAIN", "XOAUTH2"}:
+        raise HTTPException(400, "Authentification IMAP invalide.")
+    account["authmech1"] = mech
+    field = "oauth2_token1" if mech == "XOAUTH2" else "password1"
+    credential = str(form.get(field, ""))
+    if not credential or len(credential) > 8192 or any(ord(c) < 32 for c in credential):
+        raise HTTPException(400, "Renseignez le mot de passe source ou connectez le compte OAuth2.")
+    account["token1" if mech == "XOAUTH2" else "pass1"] = credential
+    try:
+        folders = await asyncio.to_thread(extract_folders, account)
+    except PreprocessingError as error:
+        raise HTTPException(502, str(error)) from None
+    return JSONResponse({"folders": folders}, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/cgi-bin/imapsync")
 async def manual_sync(request: Request):
     form = await request.form()
@@ -1500,7 +1525,7 @@ def folder_settings(form):
     raw = str(form.get("folder_exclusions", ""))
     patterns = list(dict.fromkeys(line.strip() for line in raw.splitlines() if line.strip()))
     if len(raw) > 8000 or len(patterns) > 40 or any(
-            len(pattern) > 200 or pattern.count("*") > 5 or any(ord(c) < 32 or ord(c) == 127 for c in pattern) for pattern in patterns):
+            len(pattern) > 200 or (not pattern.startswith("=") and pattern.count("*") > 5) or pattern == "=" or any(ord(c) < 32 or ord(c) == 127 for c in pattern) for pattern in patterns):
         raise HTTPException(400, "Indiquez au plus 40 exclusions de 200 caractères et 5 astérisques par ligne.")
     return {"folder_order": order, "folder_exclusions": patterns}
 
@@ -1509,7 +1534,12 @@ def folder_exclusion_regex(pattern):
     def encode(match):
         data = b64encode(match[0].encode("utf-16-be")).decode().rstrip("=").replace("/", ",")
         return "&" + data + "-"
+    exact = pattern.startswith("=")
+    if exact:
+        pattern = pattern[1:]
     wire_pattern = re.sub(r"[^ -~]+", encode, pattern.replace("&", "&-"))
+    if exact:
+        return r"\A" + re.escape(wire_pattern) + r"\Z"
     glob = ".*".join(re.escape(part) for part in re.split(r"\*+", wire_pattern))
     return r"(?i)(?:^|[./])" + glob + r"(?:[./].*)?$"
 
