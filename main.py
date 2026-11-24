@@ -396,7 +396,27 @@ async def request_link(request: Request):
           outcome="rate_limited" if limited else ("accepted" if known else "unknown_user"))
     if known and not limited:
         spawn(deliver_link(email, token))
-    return render(request, "login.html", sent=True)
+    webmails = {
+        "gmail.com": ("Gmail", "https://mail.google.com"),
+        "googlemail.com": ("Gmail", "https://mail.google.com"),
+        "outlook.com": ("Outlook", "https://outlook.live.com/mail/"),
+        "outlook.fr": ("Outlook", "https://outlook.live.com/mail/"),
+        "hotmail.com": ("Outlook", "https://outlook.live.com/mail/"),
+        "hotmail.fr": ("Outlook", "https://outlook.live.com/mail/"),
+        "live.com": ("Outlook", "https://outlook.live.com/mail/"),
+        "live.fr": ("Outlook", "https://outlook.live.com/mail/"),
+        "msn.com": ("Outlook", "https://outlook.live.com/mail/"),
+        "yahoo.com": ("Yahoo Mail", "https://mail.yahoo.com"),
+        "yahoo.fr": ("Yahoo Mail", "https://mail.yahoo.com"),
+        "ymail.com": ("Yahoo Mail", "https://mail.yahoo.com"),
+        "icloud.com": ("iCloud Mail", "https://www.icloud.com/mail/"),
+        "me.com": ("iCloud Mail", "https://www.icloud.com/mail/"),
+        "mac.com": ("iCloud Mail", "https://www.icloud.com/mail/"),
+        "proton.me": ("Proton Mail", "https://mail.proton.me"),
+        "protonmail.com": ("Proton Mail", "https://mail.proton.me"),
+    }
+    domain = email.rsplit("@", 1)[-1] if email.count("@") == 1 else ""
+    return render(request, "login.html", sent=True, webmail=webmails.get(domain))
 
 
 @app.get("/auth/verify")

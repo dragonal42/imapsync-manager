@@ -1,5 +1,16 @@
-{% extends 'base.html' %}{% block content %}<section class="narrow"><h1>Connexion à votre espace</h1>
+{% extends 'base.html' %}{% block content %}<section id="login-access" class="narrow"><h1>Connexion à votre espace</h1>
+{% if sent %}
+<p class="notice" role="status">Si cette adresse est enregistrée, un lien de connexion vous sera envoyé. Il expire dans 15 minutes. Pensez à vérifier vos courriers indésirables.</p>
+<p>Vous pouvez fermer cet onglet ou cette fenêtre. Le lien reçu par email vous permettra de poursuivre la connexion.</p>
+{% if webmail %}
+<a class="button" href="{{ webmail[1] }}" target="_blank" rel="noopener noreferrer">Ouvrir {{ webmail[0] }}</a>
+{% else %}
+<button type="button" id="close-login">Fermer cet onglet</button>
+<p id="close-login-help" class="muted" role="status" hidden>Si cet onglet reste ouvert, votre navigateur empêche sa fermeture automatique. Fermez-le avec la croix de l’onglet.</p>
+<script defer src="/static/login.js"></script>
+{% endif %}
+{% else %}
 <p>Aucun mot de passe. Saisissez l’adresse email enregistrée par votre administrateur.</p>
-{% if sent %}<p class="notice" role="status">Si cette adresse est enregistrée, un lien de connexion vous sera envoyé. Il expire dans 15 minutes. Pensez à vérifier vos courriers indésirables.</p><p>Vous pouvez fermer cet onglet ou cette fenêtre. Ouvrez le lien reçu par email pour poursuivre la connexion dans un autre onglet ou une autre fenêtre.</p>{% endif %}
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-<form action="/login" method="post"><label>Email<input name="email" type="email" autocomplete="email" maxlength="254" required></label><button>Recevoir mon lien de connexion</button></form></section>{% endblock %}
+<form action="/login" method="post"><label>Email<input name="email" type="email" autocomplete="email" maxlength="254" required></label><button>Recevoir mon lien de connexion</button></form>
+{% endif %}</section>{% endblock %}
