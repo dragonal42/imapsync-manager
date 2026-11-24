@@ -289,3 +289,23 @@ def test_oauth_success_escapes_tokens_and_consumes_state(env, monkeypatch):
     assert "</script><script>bad</script>" not in result.text
     assert "code_verifier" in exchange.call_args.kwargs["data"]
     assert alice.get("/oauth/callback", params={"state": state, "code": "code"}).status_code == 400
+
+
+@pytest.mark.parametrize('email,href', [
+    ('user@GMAIL.com', 'https://mail.google.com'),
+    ('user@hotmail.fr', 'https://outlook.live.com/mail/'),
+    ('user@yahoo.fr', 'https://mail.yahoo.com'),
+    ('user@icloud.com', 'https://www.icloud.com/mail/'),
+    ('user@proton.me', 'https://mail.proton.me'),
+    ('user@gmail.com.example.org', None),
+    ('user@example.org', None),
+])
+def test_login_confirmation_actions(env, email, href):
+    page = client().post('/login', data={'email': email}).text
+    assert 'name="email"' not in page
+    assert 'Recevoir mon lien' not in page
+    if href:
+        assert 'href="' + href + '"' in page and 'id="close-login"' not in page
+    else:
+        assert 'id="close-login"' in page and 'close-login-help' in page
+    assert 'Si cette adresse est enregistrée' in page
